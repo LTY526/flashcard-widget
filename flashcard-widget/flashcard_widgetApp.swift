@@ -12,7 +12,12 @@ import SwiftData
 struct flashcard_widgetApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Deck.self,
+            NoteType.self,
+            NoteTypeField.self,
+            Note.self,
+            Card.self,
+            MediaItem.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

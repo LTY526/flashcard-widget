@@ -2,60 +2,117 @@
 //  ContentView.swift
 //  flashcard-widget
 //
-//  Created by User on 9/12/26.
-//
 
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @Query(sort: \Deck.name) private var decks: [Deck]
+
+    @State private var isShowingFileImporter = false
+    @State private var importErrorMessage: String?
+    @State private var noteTypeNeedingMapping: NoteType?
+    @State private var pendingNoteTypeIDsNeedingMapping: [PersistentIdentifier] = []
+
+    private var apkgContentType: UTType {
+        UTType(filenameExtension: "apkg", conformingTo: .zip) ?? .zip
+    }
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+        NavigationStack {
+            Group {
+                if decks.isEmpty {
+                    ContentUnavailableView(
+                        "No decks yet",
+                        systemImage: "rectangle.stack",
+                        description: Text("Import an Anki .apkg file to get started.")
+                    )
+                } else {
+                    List {
+                        ForEach(decks) { deck in
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(deck.name)
+                                    Text("\(deck.activeCards.count) cards")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if deck.needsFieldMapping {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                        .accessibilityLabel("Needs field mapping")
+                                }
+                            }
+                        }
                     }
                 }
-                .onDelete(perform: deleteItems)
             }
+            .navigationTitle("Decks")
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
                 ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
+                    Button {
+                        isShowingFileImporter = true
+                    } label: {
+                        Label("Import .apkg", systemImage: "square.and.arrow.down")
                     }
                 }
             }
-        } detail: {
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+            .fileImporter(
+                isPresented: $isShowingFileImporter,
+                allowedContentTypes: [apkgContentType],
+                allowsMultipleSelection: false
+            ) { result in
+                handleFileImportResult(result)
+            }
+            .alert(
+                "Import failed",
+                isPresented: Binding(
+                    get: { importErrorMessage != nil },
+                    set: { if !$0 { importErrorMessage = nil } }
+                )
+            ) {
+                Button("OK") { importErrorMessage = nil }
+            } message: {
+                Text(importErrorMessage ?? "")
+            }
+            .sheet(item: $noteTypeNeedingMapping) { noteType in
+                FieldMappingView(noteType: noteType, onFinished: presentNextMappingPromptIfNeeded)
             }
         }
+    }
+
+    private func handleFileImportResult(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure:
+            importErrorMessage = ApkgImportError.notAnApkg.errorDescription
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            do {
+                let importResult = try ApkgImporter.importApkg(fileURL: url, modelContext: modelContext)
+                pendingNoteTypeIDsNeedingMapping = importResult.noteTypesNeedingMapping
+                presentNextMappingPromptIfNeeded()
+            } catch let error as ApkgImportError {
+                importErrorMessage = error.errorDescription
+            } catch {
+                importErrorMessage = ApkgImportError.damagedCollection.errorDescription
+            }
+        }
+    }
+
+    private func presentNextMappingPromptIfNeeded() {
+        guard !pendingNoteTypeIDsNeedingMapping.isEmpty else {
+            noteTypeNeedingMapping = nil
+            return
+        }
+        let nextID = pendingNoteTypeIDsNeedingMapping.removeFirst()
+        noteTypeNeedingMapping = modelContext.model(for: nextID) as? NoteType
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .modelContainer(for: Deck.self, inMemory: true)
 }
