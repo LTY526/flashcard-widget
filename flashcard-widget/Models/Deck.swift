@@ -35,9 +35,27 @@ final class Deck {
     /// hasn't finished field-role mapping. Drives the "needs field mapping"
     /// badge required by the apkg-import spec.
     var needsFieldMapping: Bool {
-        activeCards.contains { card in
-            guard let noteType = card.note?.noteType else { return false }
-            return !noteType.isFieldMappingComplete
+        !noteTypesNeedingMapping.isEmpty
+    }
+
+    /// Distinct note types used by this deck's active cards, mapped or not.
+    /// A note type's mapping is shared globally (keyed by `ankiNoteTypeID`,
+    /// per ADR 0001 decision 4) -- editing it from one deck affects every
+    /// other deck that reuses the same note type.
+    var allNoteTypes: [NoteType] {
+        var seen = Set<PersistentIdentifier>()
+        var result: [NoteType] = []
+        for card in activeCards {
+            guard let noteType = card.note?.noteType else { continue }
+            if seen.insert(noteType.persistentModelID).inserted {
+                result.append(noteType)
+            }
         }
+        return result
+    }
+
+    /// Subset of `allNoteTypes` that still needs a field-role mapping.
+    var noteTypesNeedingMapping: [NoteType] {
+        allNoteTypes.filter { !$0.isFieldMappingComplete }
     }
 }
