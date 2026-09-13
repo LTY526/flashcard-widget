@@ -46,8 +46,10 @@ on.
       scheduling, but the row and any history/state attached to it (future
       scheduling phases will attach review/progress history to a card) is
       preserved rather than destroyed. Hard-deleting is out of scope for
-      this slice; nothing in this app ever needs to actually erase a card
-      row once created.
+      *this reconciliation path* — automatic re-import never erases a note
+      or card row. The one exception is explicit, user-initiated deck
+      removal (see below), which does hard-delete; that's deliberate user
+      intent, not a side effect of importing an updated file.
 - [ ] After import, for each new note type encountered with 2 or more
       fields, the user is prompted to map its fields to at least two roles:
       `primary` and `secondary` (e.g. for a Japanese vocab note type:
@@ -90,6 +92,51 @@ on.
       asserts: both the removed note's row and the removed card's row
       still exist in SwiftData, both are flagged as removed, and both are
       excluded from queries for "active" notes/cards in that deck.
+- [ ] The `.apkg` file type is declared in the app's Info.plist
+      (`UTImportedTypeDeclarations`, conforming to `public.zip-archive`),
+      not just constructed at runtime via
+      `UTType(filenameExtension:conformingTo:)` — the system file picker
+      needs the declared type to recognize and allow selecting `.apkg`
+      files from Files/iCloud/other providers; without it, matching files
+      appear greyed out and unselectable.
+- [ ] Each deck in the deck list can be removed via a destructive swipe
+      action, gated by a confirmation dialog stating the action is
+      permanent (but the source `.apkg` can be re-imported later).
+- [ ] Removing a deck hard-deletes that deck and its cards (per ADR 0001,
+      decision 8 — an explicit exception to decision 6's soft-delete
+      policy, since this is deliberate user intent, not automatic
+      reconciliation). A note is hard-deleted (along with its
+      cascade-deleted media rows and the actual media files on disk) if it
+      has no *active* card left outside the deck being removed. A note
+      that still has an active card in another deck is left untouched,
+      including its media. A note whose only other card is itself
+      soft-deleted (e.g. removed by an earlier re-import) does **not**
+      count as "still in use elsewhere" and must still be hard-deleted —
+      otherwise it (and its media) leaks permanently with no path to ever
+      being cleaned up.
+- [ ] An automated test covers `DeckRemover`: removing a deck deletes its
+      cards; a note used only by that deck is hard-deleted along with its
+      media file on disk; a note with an active card in another deck
+      survives, untouched, with its media intact; a note whose only other
+      card is soft-deleted is still hard-deleted (not treated as shared).
+- [ ] Field-role mapping is not a one-time prompt: the user can reopen the
+      mapping sheet for any deck at any time via a swipe action ("Edit
+      Mapping"), regardless of whether that deck's note types are already
+      fully mapped.
+- [ ] Reopening the mapping sheet for an already-mapped note type preloads
+      its currently-saved roles, not a fresh heuristic guess; the
+      heuristic default is only used the first time a note type is ever
+      mapped.
+- [ ] The mapping sheet shows a live preview (primary/secondary text) built
+      from a random sample note of that note type, driven by the
+      in-progress (unsaved) picker selections so it updates as the user
+      changes them. A "Try another card" control picks a different sample
+      note; disabled when fewer than two notes exist for that note type.
+- [ ] Import runs without blocking the main thread: the app shows a
+      progress indicator (toolbar spinner plus a dimmed overlay) while an
+      import is in flight, and remains responsive throughout.
+- [ ] Deck removal shows the same kind of in-progress indicator as import
+      while it runs.
 
 ## Scope-out
 
@@ -106,3 +153,9 @@ on.
   clone of Anki's scheduler.
 - Visual/UI design polish or mockups — no design direction exists yet; a
   functional import flow is enough for this slice.
+- Per-deck field-mapping overrides — a note type's mapping is global, not
+  per-deck (see ADR 0001, decision 9, which leaves this an open question
+  for a future pass rather than resolving it here).
+- Any confirmation/undo mechanism beyond the single confirmation dialog for
+  deck removal (e.g. a "recently removed" recovery view) — removal is
+  immediate and permanent once confirmed.
