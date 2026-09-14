@@ -117,7 +117,7 @@ struct FieldMappingView: View {
         let values: [String] = noteType.sortedFields.compactMap { field in
             guard (selections[field.persistentModelID] ?? nil) == role else { return nil }
             guard field.ordinal >= 0, field.ordinal < sampleNote.fieldValues.count else { return nil }
-            return sampleNote.fieldValues[field.ordinal]
+            return Note.plainText(from: sampleNote.fieldValues[field.ordinal])
         }
         guard !values.isEmpty else { return nil }
         return values.joined(separator: " / ")

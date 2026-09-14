@@ -41,7 +41,7 @@ final class Note {
         guard let noteType else { return nil }
         let values: [String] = noteType.sortedFields.compactMap { field in
             guard field.role == role, field.ordinal >= 0, field.ordinal < fieldValues.count else { return nil }
-            return fieldValues[field.ordinal]
+            return Self.plainText(from: fieldValues[field.ordinal])
         }
         guard !values.isEmpty else { return nil }
         return values.joined(separator: " / ")
@@ -49,4 +49,21 @@ final class Note {
 
     var primaryText: String? { text(for: .primary) }
     var secondaryText: String? { text(for: .secondary) }
+
+    /// Anki field values are stored as HTML fragments (e.g. `<br>`, `&nbsp;`,
+    /// `<b>`) -- strip markup and decode common entities so display text
+    /// reads as plain text instead of showing raw tags.
+    static func plainText(from html: String) -> String {
+        var text = html
+        text = text.replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: .regularExpression, range: nil)
+        text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression, range: nil)
+        let entities: [String: String] = [
+            "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">",
+            "&quot;": "\"", "&#39;": "'", "&apos;": "'",
+        ]
+        for (entity, replacement) in entities {
+            text = text.replacingOccurrences(of: entity, with: replacement)
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
