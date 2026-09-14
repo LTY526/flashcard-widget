@@ -12,7 +12,7 @@ import Testing
 
 @MainActor
 private func makeInMemoryContext() throws -> ModelContext {
-    let schema = Schema([Deck.self, NoteType.self, NoteTypeField.self, Note.self, Card.self, MediaItem.self])
+    let schema = Schema([Deck.self, NoteType.self, NoteTypeField.self, Note.self, Card.self, MediaItem.self, DisplayConfig.self, HistoryEntry.self])
     let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
     let container = try ModelContainer(for: schema, configurations: [configuration])
     return ModelContext(container)
@@ -202,6 +202,89 @@ struct ApkgImportTests {
 
         let decks = try fetchAll(Deck.self, in: context)
         #expect(decks.first?.needsFieldMapping == true)
+    }
+
+    // MARK: - Per-deck DisplayConfig + initial schedule (active-card-deck-management spec)
+
+    @Test("every deck created by import -- via the main upsert loop or the Unknown Deck fallback branch -- gets exactly one DisplayConfig and 10 seeded HistoryEntry rows")
+    func everyCreatedDeckGetsConfigAndSeededSchedule() throws {
+        let context = try makeInMemoryContext()
+        _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("unknown_deck_fallback"), modelContext: context)
+
+        let decks = try fetchAll(Deck.self, in: context)
+        #expect(decks.count == 2, "one deck from the main upsert loop, one from the Unknown Deck fallback branch")
+
+        let knownDeck = try #require(decks.first { $0.name == "Known Deck" })
+        let unknownDeck = try #require(decks.first { $0.name == "Unknown Deck" })
+
+        for deck in [knownDeck, unknownDeck] {
+            let configs = try fetchAll(DisplayConfig.self, in: context).filter { $0.deck?.persistentModelID == deck.persistentModelID }
+            #expect(configs.count == 1, "\(deck.name) must have exactly one DisplayConfig")
+            #expect(deck.displayConfig != nil)
+            #expect(deck.displayConfig?.order == .sequential)
+            #expect(deck.displayConfig?.intervalMinutes == 30)
+            #expect(deck.displayConfig?.newCardsADay == 0)
+            #expect(deck.displayConfig?.reviewPreviousDayCards == false)
+
+            #expect(deck.historyEntries.count == 10, "\(deck.name) must have its schedule seeded to 10 entries")
+        }
+    }
+
+    @Test("re-importing into an already-existing deck does not create a second DisplayConfig or reseed its schedule")
+    func reimportDoesNotDuplicateConfigOrReseed() throws {
+        let context = try makeInMemoryContext()
+        _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("unknown_deck_fallback"), modelContext: context)
+
+        let deckBefore = try #require(try fetchAll(Deck.self, in: context).first { $0.name == "Known Deck" })
+        let originalEntryIDs = Set(deckBefore.historyEntries.map(\.persistentModelID))
+        #expect(originalEntryIDs.count == 10)
+
+        _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("unknown_deck_fallback"), modelContext: context)
+
+        let decksAfter = try fetchAll(Deck.self, in: context)
+        #expect(decksAfter.count == 2, "re-importing must not duplicate decks")
+
+        let deckAfter = try #require(decksAfter.first { $0.name == "Known Deck" })
+        let configs = try fetchAll(DisplayConfig.self, in: context).filter { $0.deck?.persistentModelID == deckAfter.persistentModelID }
+        #expect(configs.count == 1, "still exactly one DisplayConfig, not two")
+
+        let entryIDsAfter = Set(deckAfter.historyEntries.map(\.persistentModelID))
+        #expect(entryIDsAfter == originalEntryIDs, "schedule wasn't reseeded -- original 10 entries' identities are unchanged")
+    }
+
+    @Test("re-importing a fixture with the deck's current card removed clears the pointer but keeps the HistoryEntry row, and regenerates the queue")
+    func reimportSoftDeletingCurrentCardClearsPointerAndRegenerates() throws {
+        let context = try makeInMemoryContext()
+        _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("modern_deck"), modelContext: context)
+        let deck = try #require(try fetchAll(Deck.self, in: context).first)
+
+        // Drive Next until the current card is the "猫" note's card (the one
+        // the removed fixture soft-deletes) -- only two active cards exist,
+        // so at most two taps are needed.
+        DeckScheduler.next(deck, in: context)
+        if deck.activeHistoryEntry?.card?.note?.fieldValues.first != "猫" {
+            DeckScheduler.next(deck, in: context)
+        }
+        let currentEntry = try #require(deck.activeHistoryEntry)
+        #expect(currentEntry.card?.note?.fieldValues.first == "猫")
+
+        _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("modern_deck_removed"), modelContext: context)
+
+        #expect(deck.activeHistoryEntry == nil, "pointer cleared since its card was soft-deleted")
+
+        let allEntries = try fetchAll(HistoryEntry.self, in: context)
+        #expect(allEntries.contains { $0.persistentModelID == currentEntry.persistentModelID }, "the old current entry's row still exists")
+        #expect(currentEntry.card == nil || currentEntry.card?.isActive == false)
+
+        let unreached = deck.historyEntries.filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
+        #expect(unreached.count == 10, "queue regenerated back to 10, synchronously")
+
+        // A subsequent Next consumes a freshly generated entry, not any
+        // pre-existing one.
+        let unreachedIDsBeforeNext = Set(unreached.map(\.persistentModelID))
+        DeckScheduler.next(deck, in: context)
+        let newCurrent = try #require(deck.activeHistoryEntry)
+        #expect(unreachedIDsBeforeNext.contains(newCurrent.persistentModelID))
     }
 
     // MARK: - Media

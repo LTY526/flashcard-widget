@@ -35,24 +35,38 @@ struct ContentView: View {
                 } else {
                     List {
                         ForEach(decks) { deck in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(deck.name)
-                                    Text("\(deck.activeCards.count) cards")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if deck.needsFieldMapping {
-                                    Button {
-                                        editMapping(for: deck)
-                                    } label: {
-                                        Image(systemName: "exclamationmark.triangle.fill")
-                                            .foregroundStyle(.orange)
+                            NavigationLink {
+                                DeckDetailView(deck: deck)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        HStack(spacing: 6) {
+                                            Text(deck.name)
+                                            if deck.isPaused {
+                                                Text("Paused")
+                                                    .font(.caption2)
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(.secondary.opacity(0.2), in: Capsule())
+                                            }
+                                        }
+                                        .foregroundStyle(deck.isPaused ? .secondary : .primary)
+                                        Text("\(deck.activeCards.count) cards")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("Needs field mapping")
-                                    .accessibilityHint("Tap to fix")
+                                    Spacer()
+                                    if deck.needsFieldMapping {
+                                        Button {
+                                            editMapping(for: deck)
+                                        } label: {
+                                            Image(systemName: "exclamationmark.triangle.fill")
+                                                .foregroundStyle(.orange)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("Needs field mapping")
+                                        .accessibilityHint("Tap to fix")
+                                    }
                                 }
                             }
                             .swipeActions(edge: .trailing) {
@@ -68,6 +82,23 @@ struct ContentView: View {
                                 }
                                 .tint(.blue)
                             }
+                            .swipeActions(edge: .leading) {
+                                Button {
+                                    togglePause(deck)
+                                } label: {
+                                    if deck.isPaused {
+                                        Label("Resume", systemImage: "play.fill")
+                                    } else {
+                                        Label("Pause", systemImage: "pause.fill")
+                                    }
+                                }
+                                .tint(deck.isPaused ? .green : .orange)
+                            }
+                        }
+                    }
+                    .onAppear {
+                        for deck in decks {
+                            DeckScheduler.readSchedule(for: deck, in: modelContext)
                         }
                     }
                 }
@@ -217,6 +248,17 @@ struct ContentView: View {
     private func editMapping(for deck: Deck) {
         pendingNoteTypeIDsNeedingMapping = deck.allNoteTypes.map(\.persistentModelID)
         presentNextMappingPromptIfNeeded()
+    }
+
+    /// Toggles a deck's pause state. Unpausing resumes normal queue
+    /// maintenance immediately (rather than waiting for some later,
+    /// unrelated read) by running the same top-up check any other
+    /// schedule read performs.
+    private func togglePause(_ deck: Deck) {
+        deck.isPaused.toggle()
+        if !deck.isPaused {
+            DeckScheduler.readSchedule(for: deck, in: modelContext)
+        }
     }
 
     private func presentNextMappingPromptIfNeeded() {

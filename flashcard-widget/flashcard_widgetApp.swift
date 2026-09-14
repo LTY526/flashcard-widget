@@ -18,6 +18,8 @@ struct flashcard_widgetApp: App {
             Note.self,
             Card.self,
             MediaItem.self,
+            DisplayConfig.self,
+            HistoryEntry.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

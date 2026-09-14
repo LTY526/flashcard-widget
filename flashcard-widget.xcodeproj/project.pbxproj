@@ -40,9 +40,9 @@
 			path = "flashcard-widget";
 			sourceTree = "<group>";
 		};
-		CEE867A2305657CF001C3CB6 /* flashcard-widgetTests */ = {
+		CEE867A2305657CF001C3CB6 /* flashcard-widget-tests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "flashcard-widgetTests";
+			path = "flashcard-widget-tests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -65,7 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				CED868A8305585D9009EFF31 /* flashcard-widget */,
-				CEE867A2305657CF001C3CB6 /* flashcard-widgetTests */,
+				CEE867A2305657CF001C3CB6 /* flashcard-widget-tests */,
 				CED868A7305585D9009EFF31 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -114,7 +114,7 @@
 				CEE867A6305657CF001C3CB6 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				CEE867A2305657CF001C3CB6 /* flashcard-widgetTests */,
+				CEE867A2305657CF001C3CB6 /* flashcard-widget-tests */,
 			);
 			name = "flashcard-widgetTests";
 			productName = "flashcard-widgetTests";

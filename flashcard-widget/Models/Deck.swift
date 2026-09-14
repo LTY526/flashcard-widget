@@ -17,14 +17,50 @@ final class Deck {
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
+    /// While `true`, `DeckScheduler.next(...)` is a complete no-op and no
+    /// code path regenerates this deck's queue (ADR 0002, decision 2).
+    /// Defaults `false` -- every deck schedules by default, and any number
+    /// of decks can be unpaused at once.
+    var isPaused: Bool = false
+
+    /// Monotonic per-deck counter `HistoryEntry.sequence` is drawn from.
+    /// Starts at 1 so the deck's first-ever entry is `sequence == 1`.
+    var nextHistorySequence: Int = 1
+
+    /// The highest `sequence` value "Next" has ever advanced to for this
+    /// deck. `nil` if Next has never been tapped -- deliberately distinct
+    /// from "the pointer is `nil`" (ADR 0002, decision 4): a soft-delete
+    /// pointer-clear leaves this at its old, non-`nil` value.
+    var highestReachedSequence: Int?
+
     @Relationship(deleteRule: .cascade, inverse: \Card.deck)
     var cards: [Card] = []
+
+    @Relationship(deleteRule: .cascade, inverse: \HistoryEntry.deck)
+    var historyEntries: [HistoryEntry] = []
+
+    @Relationship(deleteRule: .cascade, inverse: \DisplayConfig.deck)
+    var displayConfig: DisplayConfig?
+
+    /// The pointer to this deck's current card. Remains in exactly two
+    /// states: references an entry belonging to this deck, or `nil`. Not
+    /// an owning relationship -- the entry's lifecycle is governed by
+    /// `historyEntries` above.
+    var activeHistoryEntry: HistoryEntry?
 
     init(ankiDeckID: Int64, name: String) {
         self.ankiDeckID = ankiDeckID
         self.name = name
         self.createdAt = Date()
         self.updatedAt = Date()
+    }
+
+    /// Draws and advances the next `HistoryEntry.sequence` value for this
+    /// deck.
+    func consumeNextSequence() -> Int {
+        let sequence = nextHistorySequence
+        nextHistorySequence += 1
+        return sequence
     }
 
     var activeCards: [Card] {
