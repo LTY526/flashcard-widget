@@ -103,6 +103,12 @@ enum ApkgImporter {
             }
         }
 
+        // Decks created for the first time by this import -- their initial
+        // schedule can't be seeded here (no cards exist for them to pick
+        // from yet); seeding happens later in this same call, once cards
+        // have been upserted (ADR 0002, consequences).
+        var newlyCreatedDecks: [Deck] = []
+
         let referencedDeckIDs = Set(collection.cards.map { $0.deckID })
         var deckByAnkiID: [Int64: Deck] = [:]
         for parsedDeck in collection.decks where referencedDeckIDs.contains(parsedDeck.ankiID) {
@@ -113,7 +119,9 @@ enum ApkgImporter {
             } else {
                 let deck = Deck(ankiDeckID: parsedDeck.ankiID, name: parsedDeck.name)
                 modelContext.insert(deck)
+                deck.displayConfig = DisplayConfig()
                 deckByAnkiID[parsedDeck.ankiID] = deck
+                newlyCreatedDecks.append(deck)
             }
         }
         // Defensive fallback: a card can in principle reference a deck id
@@ -125,7 +133,9 @@ enum ApkgImporter {
             } else {
                 let deck = Deck(ankiDeckID: deckID, name: "Unknown Deck")
                 modelContext.insert(deck)
+                deck.displayConfig = DisplayConfig()
                 deckByAnkiID[deckID] = deck
+                newlyCreatedDecks.append(deck)
             }
         }
 
@@ -165,6 +175,16 @@ enum ApkgImporter {
             }
         }
 
+        // Seed each newly-created deck's initial schedule (10 `HistoryEntry`
+        // rows via the empty-queue generation rule) now that its cards
+        // exist -- this couldn't happen at either deck-creation site above,
+        // which run before any card has been upserted for that deck yet
+        // (ADR 0002, consequences). Still inside this same import
+        // transaction/save.
+        for deck in newlyCreatedDecks {
+            DeckScheduler.readSchedule(for: deck, in: modelContext)
+        }
+
         // Soft-delete reconciliation, scoped to decks this import actually
         // touched: any previously-known card in that deck absent from the
         // new file is flagged removed, never hard-deleted (ADR 0001,
@@ -172,12 +192,14 @@ enum ApkgImporter {
         // its cards remain active.
         let now = Date()
         var candidateNoteIDs: Set<PersistentIdentifier> = []
+        var decksWithNewSoftDeletes: Set<PersistentIdentifier> = []
         for (deckAnkiID, newCardIDs) in cardsByDeckInNewFile {
             guard let deck = deckByAnkiID[deckAnkiID] else { continue }
             for existingCard in deck.cards where !newCardIDs.contains(existingCard.ankiCardID) {
                 if existingCard.removedAt == nil {
                     existingCard.removedAt = now
                     existingCard.updatedAt = now
+                    decksWithNewSoftDeletes.insert(deck.persistentModelID)
                 }
                 if let note = existingCard.note {
                     candidateNoteIDs.insert(note.persistentModelID)
@@ -191,6 +213,17 @@ enum ApkgImporter {
                 note.removedAt = now
                 note.updatedAt = now
             }
+        }
+
+        // Per deck that had at least one card soft-deleted just now:
+        // discard its unreached queue (always, even paused), clear the
+        // pointer if its own entry's card was among those soft-deleted,
+        // then regenerate synchronously (unless paused, in which case
+        // regeneration is deferred until unpaused and next read) --
+        // ADR 0002, decision 5.
+        for deckID in decksWithNewSoftDeletes {
+            guard let deck = modelContext.model(for: deckID) as? Deck else { continue }
+            DeckScheduler.handleSoftDelete(for: deck, in: modelContext)
         }
 
         try modelContext.save()

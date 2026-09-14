@@ -15,7 +15,7 @@ import Testing
 
 @MainActor
 private func makeInMemoryContext() throws -> ModelContext {
-    let schema = Schema([Deck.self, NoteType.self, NoteTypeField.self, Note.self, Card.self, MediaItem.self])
+    let schema = Schema([Deck.self, NoteType.self, NoteTypeField.self, Note.self, Card.self, MediaItem.self, DisplayConfig.self, HistoryEntry.self])
     let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
     let container = try ModelContainer(for: schema, configurations: [configuration])
     return ModelContext(container)
@@ -130,5 +130,62 @@ struct DeckRemoverTests {
         let notes = try fetchAll(Note.self, in: context)
         #expect(notes.isEmpty, "note has no active card anywhere and must not leak")
         #expect(!FileManager.default.fileExists(atPath: mediaURL.path))
+    }
+
+    // MARK: - DisplayConfig / HistoryEntry cascade (active-card-deck-management spec)
+
+    @Test("removing a deck deletes its DisplayConfig and every HistoryEntry (reached and unreached)")
+    func removingDeckDeletesConfigAndHistory() throws {
+        let context = try makeInMemoryContext()
+        let deck = makeDeck(ankiID: 1, name: "Deck A", in: context)
+        let config = DisplayConfig()
+        config.deck = deck
+        deck.displayConfig = config
+        context.insert(config)
+
+        let note = makeNote(ankiID: 1, fieldValues: ["front"], in: context)
+        let card = makeCard(ankiID: 1, note: note, deck: deck, in: context)
+
+        let reachedEntry = HistoryEntry(sequence: 1, projectedAt: Date(), card: card, deck: deck)
+        context.insert(reachedEntry)
+        let unreachedEntry = HistoryEntry(sequence: 2, projectedAt: Date(), card: card, deck: deck)
+        context.insert(unreachedEntry)
+        deck.nextHistorySequence = 3
+        deck.highestReachedSequence = 1
+        deck.activeHistoryEntry = reachedEntry
+        try context.save()
+
+        try DeckRemover.remove(deck, from: context)
+
+        let configs = try fetchAll(DisplayConfig.self, in: context)
+        #expect(configs.isEmpty)
+        let entries = try fetchAll(HistoryEntry.self, in: context)
+        #expect(entries.isEmpty)
+    }
+
+    @Test("removing an unrelated deck that hard-deletes a shared note's card leaves the other deck's HistoryEntry row intact with card == nil")
+    func removingUnrelatedDeckLeavesHistoryEntryWithNilCard() throws {
+        let context = try makeInMemoryContext()
+        let deckA = makeDeck(ankiID: 1, name: "Deck A", in: context)
+        let deckB = makeDeck(ankiID: 2, name: "Deck B", in: context)
+        let note = makeNote(ankiID: 1, fieldValues: ["front"], in: context)
+        // Deck A's card is already soft-deleted (not active); Deck B's card
+        // is active. Removing Deck B erases the note (ADR 0001, decision 8)
+        // since none of its cards remain active outside Deck B.
+        let cardA = makeCard(ankiID: 1, note: note, deck: deckA, removed: true, in: context)
+        _ = makeCard(ankiID: 2, note: note, deck: deckB, in: context)
+
+        let deckAEntry = HistoryEntry(sequence: 1, projectedAt: Date(), card: cardA, deck: deckA)
+        context.insert(deckAEntry)
+        deckA.highestReachedSequence = 1
+        deckA.activeHistoryEntry = deckAEntry
+        try context.save()
+
+        try DeckRemover.remove(deckB, from: context)
+
+        let entries = try fetchAll(HistoryEntry.self, in: context)
+        #expect(entries.count == 1, "Deck A's HistoryEntry row must still exist")
+        let survivingEntry = try #require(entries.first)
+        #expect(survivingEntry.card == nil, "nullified rather than cascaded away or crashing")
     }
 }

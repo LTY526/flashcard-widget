@@ -21,6 +21,14 @@ final class Card {
     var note: Note?
     var deck: Deck?
 
+    /// `HistoryEntry` rows (in any deck) that reference this card.
+    /// Nullify-on-delete: hard-deleting a card (e.g. via `DeckRemover`'s
+    /// cross-deck note cleanup) leaves referencing entries in place with
+    /// `card == nil` rather than cascading their deletion (ADR 0002,
+    /// consequences).
+    @Relationship(deleteRule: .nullify, inverse: \HistoryEntry.card)
+    var historyEntries: [HistoryEntry] = []
+
     init(ankiCardID: Int64, ordinal: Int, note: Note?, deck: Deck?) {
         self.ankiCardID = ankiCardID
         self.ordinal = ordinal
