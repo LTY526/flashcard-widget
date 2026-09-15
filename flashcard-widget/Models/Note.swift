@@ -49,6 +49,7 @@ final class Note {
 
     var primaryText: String? { text(for: .primary) }
     var secondaryText: String? { text(for: .secondary) }
+    var tertiaryText: String? { text(for: .tertiary) }
 
     /// Anki field values are stored as HTML fragments (e.g. `<br>`, `&nbsp;`,
     /// `<b>`) -- strip markup and decode common entities so display text

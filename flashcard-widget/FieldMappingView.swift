@@ -3,7 +3,7 @@
 //  flashcard-widget
 //
 //  Prompts the user to map a note type's fields to display roles
-//  (primary/secondary). Reused both for a newly-encountered note type and
+//  (primary/secondary/tertiary). Reused both for a newly-encountered note type and
 //  for editing an already-mapped one at any time -- mapping isn't a
 //  one-time onboarding step, the user can revisit it whenever they want to
 //  change what's shown. Dismissing without finishing an unmapped note type
@@ -55,12 +55,13 @@ struct FieldMappingView: View {
                             Text("Unused").tag(FieldRole?.none)
                             Text("Primary").tag(FieldRole?.some(.primary))
                             Text("Secondary").tag(FieldRole?.some(.secondary))
+                            Text("Tertiary").tag(FieldRole?.some(.tertiary))
                         }
                     }
                 } header: {
                     Text("Map \"\(noteType.name)\" fields")
                 } footer: {
-                    Text("Primary is shown prominently; secondary fills in supporting detail. Unused fields are still stored. This mapping applies to every deck that shares this note type.")
+                    Text("Primary is shown prominently; secondary fills in supporting detail; tertiary adds in-app detail. Unused fields are still stored. This mapping applies to every deck that shares this note type.")
                 }
             }
             .navigationTitle("Field Mapping")
@@ -89,23 +90,11 @@ struct FieldMappingView: View {
     @ViewBuilder
     private var previewContent: some View {
         if sampleNote != nil {
-            VStack(alignment: .leading, spacing: 6) {
-                if let primary = previewText(for: .primary) {
-                    Text(primary)
-                        .font(.headline)
-                } else {
-                    Text("No field mapped to Primary yet")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                }
-                if let secondary = previewText(for: .secondary) {
-                    Text(secondary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
+            CardWidgetView(
+                primary: previewText(for: .primary),
+                secondary: previewText(for: .secondary),
+                tertiary: previewText(for: .tertiary)
+            )
         } else {
             Text("No sample cards available yet")
                 .foregroundStyle(.secondary)

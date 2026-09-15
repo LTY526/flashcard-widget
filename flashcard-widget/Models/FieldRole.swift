@@ -12,4 +12,5 @@ import Foundation
 enum FieldRole: String, Codable, CaseIterable, Sendable {
     case primary
     case secondary
+    case tertiary
 }

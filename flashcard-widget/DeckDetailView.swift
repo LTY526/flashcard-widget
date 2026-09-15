@@ -5,9 +5,8 @@
 //  Per-deck screen: current card (via that deck's own scheduled queue),
 //  Next/Back, pause/resume, its one `DisplayConfig` editable in place, and
 //  a link to this deck's own paginated History screen (ADR 0002,
-//  decision 1). Uses a simple inline layout for the active-card display --
-//  the reusable `CardWidgetView` component is a separate spec, out of
-//  scope here.
+//  decision 1). The active card uses the same reusable `CardWidgetView` as
+//  field-mapping previews.
 //
 
 import SwiftUI
@@ -79,14 +78,11 @@ struct DeckDetailView: View {
     private var currentCardContent: some View {
         if let entry = deck.activeHistoryEntry {
             if let card = entry.card, let note = card.note {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let primary = note.primaryText {
-                        Text(primary).font(.headline)
-                    }
-                    if let secondary = note.secondaryText {
-                        Text(secondary).font(.subheadline).foregroundStyle(.secondary)
-                    }
-                }
+                CardWidgetView(
+                    primary: note.primaryText,
+                    secondary: note.secondaryText,
+                    tertiary: note.tertiaryText
+                )
             } else {
                 Text("This card is no longer available.")
                     .foregroundStyle(.secondary)
