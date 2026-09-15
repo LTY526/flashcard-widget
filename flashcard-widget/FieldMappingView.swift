@@ -46,7 +46,7 @@ struct FieldMappingView: View {
                 } header: {
                     Text("Preview")
                 } footer: {
-                    Text("Shows how a sample card would look with the mapping below.")
+                    Text("The card uses approximate Lock Screen widget dimensions. Tertiary content appears only as in-app detail.")
                 }
 
                 Section {
@@ -90,11 +90,19 @@ struct FieldMappingView: View {
     @ViewBuilder
     private var previewContent: some View {
         if sampleNote != nil {
-            CardWidgetView(
-                primary: previewText(for: .primary),
-                secondary: previewText(for: .secondary),
-                tertiary: previewText(for: .tertiary)
-            )
+            VStack(alignment: .leading, spacing: 8) {
+                CardWidgetView(
+                    primary: previewText(for: .primary),
+                    secondary: previewText(for: .secondary),
+                    tertiary: previewText(for: .tertiary)
+                )
+
+                if let tertiary = previewText(for: .tertiary) {
+                    Text("In-app detail: \(tertiary)")
+                        .font(.footnote)
+                        .foregroundStyle(.tertiary)
+                }
+            }
         } else {
             Text("No sample cards available yet")
                 .foregroundStyle(.secondary)

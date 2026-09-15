@@ -81,7 +81,8 @@ struct DeckDetailView: View {
                 CardWidgetView(
                     primary: note.primaryText,
                     secondary: note.secondaryText,
-                    tertiary: note.tertiaryText
+                    tertiary: note.tertiaryText,
+                    presentation: .inApp
                 )
             } else {
                 Text("This card is no longer available.")

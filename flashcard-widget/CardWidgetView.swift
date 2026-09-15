@@ -31,56 +31,97 @@ struct CardWidgetContent: Equatable, Sendable {
     }
 }
 
+enum CardWidgetPresentation {
+    case lockScreen
+    case inApp
+}
+
 struct CardWidgetView: View {
     private let content: CardWidgetContent
+    private let presentation: CardWidgetPresentation
 
-    init(primary: String?, secondary: String?, tertiary: String?) {
+    init(
+        primary: String?,
+        secondary: String?,
+        tertiary: String?,
+        presentation: CardWidgetPresentation = .lockScreen
+    ) {
         content = CardWidgetContent.resolve(
             primary: primary,
             secondary: secondary,
             tertiary: tertiary
         )
+        self.presentation = presentation
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(content.primary)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(content.usesPrimaryPlaceholder ? .secondary : .primary)
-                .lineLimit(1)
+        switch presentation {
+        case .lockScreen:
+            cardContent
+                .padding(8)
+                .frame(width: 160, height: 72, alignment: .leading)
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(.separator, lineWidth: 0.5)
+                }
+        case .inApp:
+            cardContent
+                .padding()
+                .frame(maxWidth: .infinity, minHeight: 160, alignment: .leading)
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(.separator, lineWidth: 0.5)
+                }
+        }
+    }
 
-            Spacer(minLength: 2)
+    private var cardContent: some View {
+        VStack(alignment: .leading, spacing: presentation == .lockScreen ? 2 : 8) {
+            Text(content.primary)
+                .font(primaryFont)
+                .foregroundStyle(content.usesPrimaryPlaceholder ? .secondary : .primary)
+                .lineLimit(presentation == .lockScreen ? 1 : 2)
+                .minimumScaleFactor(0.75)
+
+            Spacer(minLength: presentation == .lockScreen ? 1 : 12)
 
             if let secondary = content.secondary {
                 Text(secondary)
-                    .font(.caption)
+                    .font(secondaryFont)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(presentation == .lockScreen ? 1 : 2)
             }
 
-            if let tertiary = content.tertiary {
+            if presentation == .inApp, let tertiary = content.tertiary {
                 Text(tertiary)
-                    .font(.caption2)
+                    .font(.footnote)
                     .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
         }
-        .padding(10)
-        .frame(maxWidth: 260, maxHeight: 108, alignment: .leading)
-        .aspectRatio(2.4, contentMode: .fit)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(.separator, lineWidth: 0.5)
-        }
         .accessibilityElement(children: .combine)
+    }
+
+    private var primaryFont: Font {
+        presentation == .lockScreen ? .caption.weight(.semibold) : .title2.weight(.semibold)
+    }
+
+    private var secondaryFont: Font {
+        presentation == .lockScreen ? .caption2 : .body
     }
 }
 
 #Preview("Card variants") {
     ScrollView {
         VStack(spacing: 16) {
-            CardWidgetView(primary: "犬", secondary: "dog", tertiary: "いぬ")
+            CardWidgetView(
+                primary: "犬",
+                secondary: "dog",
+                tertiary: "いぬ",
+                presentation: .inApp
+            )
             CardWidgetView(primary: "猫", secondary: "cat", tertiary: nil)
             CardWidgetView(primary: "鳥", secondary: nil, tertiary: nil)
             CardWidgetView(primary: nil, secondary: "Unmapped note type", tertiary: nil)
