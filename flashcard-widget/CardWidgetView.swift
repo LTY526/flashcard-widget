@@ -43,30 +43,34 @@ struct CardWidgetView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(content.primary)
-                .font(.title2.weight(.semibold))
+                .font(.headline.weight(.semibold))
                 .foregroundStyle(content.usesPrimaryPlaceholder ? .secondary : .primary)
+                .lineLimit(1)
 
-            Spacer(minLength: 24)
+            Spacer(minLength: 2)
 
             if let secondary = content.secondary {
                 Text(secondary)
-                    .font(.body)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
             if let tertiary = content.tertiary {
                 Text(tertiary)
-                    .font(.footnote)
+                    .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 220, alignment: .leading)
-        .padding()
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
+        .padding(10)
+        .frame(maxWidth: 260, maxHeight: 108, alignment: .leading)
+        .aspectRatio(2.4, contentMode: .fit)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
         .overlay {
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 12)
                 .stroke(.separator, lineWidth: 0.5)
         }
         .accessibilityElement(children: .combine)
