@@ -46,7 +46,7 @@ struct FieldMappingView: View {
                 } header: {
                     Text("Preview")
                 } footer: {
-                    Text("The card uses approximate Lock Screen widget dimensions. Tertiary content appears only as in-app detail.")
+                    Text("The widget shows Primary, Secondary, and Tertiary. Quaternary appears as in-app detail.")
                 }
 
                 Section {
@@ -56,12 +56,13 @@ struct FieldMappingView: View {
                             Text("Primary").tag(FieldRole?.some(.primary))
                             Text("Secondary").tag(FieldRole?.some(.secondary))
                             Text("Tertiary").tag(FieldRole?.some(.tertiary))
+                            Text("Quaternary").tag(FieldRole?.some(.quaternary))
                         }
                     }
                 } header: {
                     Text("Map \"\(noteType.name)\" fields")
                 } footer: {
-                    Text("Primary is shown prominently; secondary fills in supporting detail; tertiary adds in-app detail. Unused fields are still stored. This mapping applies to every deck that shares this note type.")
+                    Text("Primary is shown prominently; Secondary and Tertiary support the widget; Quaternary adds in-app detail. Unused fields are still stored.")
                 }
             }
             .navigationTitle("Field Mapping")
@@ -94,11 +95,17 @@ struct FieldMappingView: View {
                 CardWidgetView(
                     primary: previewText(for: .primary),
                     secondary: previewText(for: .secondary),
-                    tertiary: previewText(for: .tertiary)
+                    tertiary: previewText(for: .tertiary),
+                    quaternary: previewText(for: .quaternary)
                 )
 
                 if let tertiary = previewText(for: .tertiary) {
                     Text("In-app detail: \(tertiary)")
+                        .font(.footnote)
+                        .foregroundStyle(.tertiary)
+                }
+                if let quaternary = previewText(for: .quaternary) {
+                    Text("In-app detail: \(quaternary)")
                         .font(.footnote)
                         .foregroundStyle(.tertiary)
                 }

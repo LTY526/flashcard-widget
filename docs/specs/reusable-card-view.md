@@ -1,5 +1,11 @@
 # reusable-card-view
 
+> Extended by
+> [sleep-aware-schedule-and-four-field-display](sleep-aware-schedule-and-four-field-display.md):
+> the widget renders tertiary as a third compact row and quaternary is the
+> unlimited app-only detail role. Conflicting three-role wording below is the
+> historical contract for the earlier implementation.
+
 ## Goal
 
 Extract a single reusable SwiftUI view for "how a card is displayed" —

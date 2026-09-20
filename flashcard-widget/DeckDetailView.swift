@@ -3,7 +3,7 @@
 //  flashcard-widget
 //
 //  Per-deck screen: current card (via that deck's own scheduled queue),
-//  Next/Back, pause/resume, its one `DisplayConfig` editable in place, and
+//  Next, pause/resume, its one `DisplayConfig` editable in place, and
 //  a link to this deck's own paginated History screen (ADR 0002,
 //  decision 1). The active card uses the same reusable `CardWidgetView` as
 //  field-mapping previews.
@@ -14,43 +14,63 @@ import SwiftData
 
 struct DeckDetailView: View {
     @Bindable var deck: Deck
+    let scheduleRevision: Int
     @Environment(\.modelContext) private var modelContext
 
+    init(deck: Deck, scheduleRevision: Int = 0) {
+        self.deck = deck
+        self.scheduleRevision = scheduleRevision
+    }
+
     var body: some View {
+        let _ = scheduleRevision
         Form {
             Section("Current Card") {
                 currentCardContent
-                HStack {
-                    Button {
-                        DeckScheduler.back(deck)
-                    } label: {
-                        Label("Back", systemImage: "arrow.left")
+                Button {
+                    do {
+                        try ScheduleFileLock.shared().withExclusiveLock {
+                            try DeckScheduler.next(deck, in: modelContext, now: Date())
+                            try modelContext.save()
+                        }
+                        Task {
+                            await WidgetTimelineReloader.shared.scheduleReload()
+                        }
+                    } catch {
+                        // Keep the current card when advancing or saving fails.
                     }
-                    .disabled(!DeckScheduler.canGoBack(deck))
-
-                    Spacer()
-
-                    Button {
-                        DeckScheduler.next(deck, in: modelContext)
-                    } label: {
-                        Label("Next", systemImage: "arrow.right")
-                    }
-                    .disabled(deck.isPaused || deck.activeCards.isEmpty)
+                } label: {
+                    Label("Next", systemImage: "arrow.right")
                 }
+                .disabled(deck.isPaused || deck.activeCards.isEmpty)
             }
 
             Section {
                 Toggle("Paused", isOn: Binding(
                     get: { deck.isPaused },
                     set: { newValue in
-                        deck.isPaused = newValue
-                        if !newValue {
-                            DeckScheduler.readSchedule(for: deck, in: modelContext)
+                        guard newValue != deck.isPaused else { return }
+                        do {
+                            try ScheduleFileLock.shared().withExclusiveLock {
+                                try DeckScheduler.setPaused(
+                                    newValue,
+                                    deck: deck,
+                                    in: modelContext,
+                                    now: Date()
+                                )
+                                try modelContext.save()
+                            }
+                            Task {
+                                await WidgetTimelineReloader.shared.scheduleReload()
+                            }
+                        } catch {
+                            // Keep the last saved pause state when updating fails.
+                            modelContext.rollback()
                         }
                     }
                 ))
             } footer: {
-                Text("While paused, this deck's Next is a no-op and its queue isn't regenerated.")
+                Text("Pausing clears upcoming cards and updates the widget. Resuming starts a new schedule.")
             }
 
             if let config = deck.displayConfig {
@@ -59,9 +79,9 @@ struct DeckDetailView: View {
 
             Section {
                 NavigationLink {
-                    DeckHistoryView(deck: deck)
+                    DeckHistoryView(deck: deck, scheduleRevision: scheduleRevision)
                 } label: {
-                    Label("History", systemImage: "clock.arrow.circlepath")
+                    Label("Schedule", systemImage: "calendar")
                 }
             }
         }
@@ -70,7 +90,6 @@ struct DeckDetailView: View {
             if deck.displayConfig == nil {
                 deck.displayConfig = DisplayConfig()
             }
-            DeckScheduler.readSchedule(for: deck, in: modelContext)
         }
     }
 
@@ -82,6 +101,7 @@ struct DeckDetailView: View {
                     primary: note.primaryText,
                     secondary: note.secondaryText,
                     tertiary: note.tertiaryText,
+                    quaternary: note.quaternaryText,
                     presentation: .inApp
                 )
             } else {
@@ -110,8 +130,9 @@ private struct DisplayConfigSection: View {
                 get: { config.order },
                 set: { newOrder in
                     guard newOrder != config.order else { return }
-                    config.order = newOrder
-                    DeckScheduler.handleOrderChange(for: deck, in: modelContext)
+                    applyScheduleEdit {
+                        config.order = newOrder
+                    }
                 }
             )) {
                 Text("Sequential").tag(DisplayOrder.sequential)
@@ -120,7 +141,10 @@ private struct DisplayConfigSection: View {
 
             Stepper(value: Binding(
                 get: { config.intervalMinutes },
-                set: { config.updateIntervalMinutes($0) }
+                set: { candidate in
+                    guard candidate != config.intervalMinutes else { return }
+                    applyScheduleEdit { config.updateIntervalMinutes(candidate) }
+                }
             ), in: DisplayConfig.minimumIntervalMinutes...1440, step: 5) {
                 Text("Interval: \(config.intervalMinutes) min")
             }
@@ -128,10 +152,53 @@ private struct DisplayConfigSection: View {
             Stepper("New cards a day: \(config.newCardsADay)", value: $config.newCardsADay, in: 0...200)
 
             Toggle("Review previous-day cards", isOn: $config.reviewPreviousDayCards)
+
+            Toggle("Sleep Schedule", isOn: Binding(
+                get: { config.sleepEnabled },
+                set: { enabled in updateSleep(enabled: enabled) }
+            ))
+            DatePicker("Sleep starts", selection: minuteBinding(\.sleepStartMinute), displayedComponents: .hourAndMinute)
+            DatePicker("Wake time", selection: minuteBinding(\.sleepEndMinute), displayedComponents: .hourAndMinute)
         } header: {
             Text("Display Config")
         } footer: {
-            Text("Interval is advisory spacing between cards (minimum \(DisplayConfig.minimumIntervalMinutes) minutes), not a guaranteed exact countdown. \"New cards a day\" and \"Review previous-day cards\" are stored but not yet enforced.")
+            Text("Automatic progress stops during the sleep range. Start and wake times remain editable while disabled.")
+        }
+    }
+
+    private func minuteBinding(_ keyPath: ReferenceWritableKeyPath<DisplayConfig, Int>) -> Binding<Date> {
+        Binding {
+            Calendar.current.date(bySettingHour: config[keyPath: keyPath] / 60, minute: config[keyPath: keyPath] % 60, second: 0, of: Date()) ?? Date()
+        } set: { date in
+            let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+            let minute = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+            guard minute != config[keyPath: keyPath] else { return }
+            applyScheduleEdit {
+                try config.updateSleep(
+                    enabled: config.sleepEnabled,
+                    startMinute: keyPath == \.sleepStartMinute ? minute : config.sleepStartMinute,
+                    endMinute: keyPath == \.sleepEndMinute ? minute : config.sleepEndMinute
+                )
+            }
+        }
+    }
+
+    private func updateSleep(enabled: Bool) {
+        applyScheduleEdit {
+            try config.updateSleep(enabled: enabled, startMinute: config.sleepStartMinute, endMinute: config.sleepEndMinute)
+        }
+    }
+
+    private func applyScheduleEdit(_ edit: () throws -> Void) {
+        do {
+            try ScheduleFileLock.shared().withExclusiveLock {
+                try edit()
+                try DeckScheduler.rebuildFuture(for: deck, in: modelContext, now: Date())
+                try modelContext.save()
+            }
+            Task { await WidgetTimelineReloader.shared.scheduleReload() }
+        } catch {
+            modelContext.rollback()
         }
     }
 }

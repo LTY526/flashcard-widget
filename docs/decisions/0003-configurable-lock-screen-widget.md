@@ -1,5 +1,10 @@
 # 0003: Queue-driven configurable Lock Screen widget
 
+> Superseded in part by [ADR 0004](0004-sleep-aware-schedule-and-four-field-display.md):
+> schedules now exclude per-deck sleep ranges, seeding persists an immediate
+> current card plus ten future cards, the widget renders tertiary as its third
+> row, and quaternary is the app-only detail role.
+
 ## Decision
 
 1. Add one WidgetKit extension supporting only `.accessoryRectangular`. It uses

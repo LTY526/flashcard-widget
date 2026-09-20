@@ -1,5 +1,9 @@
 # 0002: Per-deck active card, history, and display config
 
+> Scheduling and navigation portions are superseded by ADR 0003. Back is
+> removed; initial scheduling begins at injected `now`; sequence remains
+> strict identity/order while timestamps are compared only for due status.
+
 ## Decision
 
 1. **Active card and history are per-deck, not global.** Every `Deck` gets

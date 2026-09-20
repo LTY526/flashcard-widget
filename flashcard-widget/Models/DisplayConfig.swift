@@ -19,12 +19,17 @@ final class DisplayConfig {
     /// scheduling spacing, not a guaranteed exact interval, but it still
     /// isn't allowed to be so small it stops meaning anything.
     static let minimumIntervalMinutes = 15
+    static let maximumIntervalMinutes = 1440
     static let defaultIntervalMinutes = 30
 
     var orderRawValue: String = DisplayOrder.sequential.rawValue
     var intervalMinutes: Int = DisplayConfig.defaultIntervalMinutes
     var newCardsADay: Int = 0
     var reviewPreviousDayCards: Bool = false
+    var sleepEnabled: Bool = false
+    var sleepStartMinute: Int = 1_320
+    var sleepEndMinute: Int = 420
+    var scheduleTimeZoneIdentifier: String?
 
     var deck: Deck?
 
@@ -49,7 +54,7 @@ final class DisplayConfig {
     /// Shared by `init` and the edit UI so the floor is enforced in exactly
     /// one place.
     static func clampedIntervalMinutes(_ candidate: Int) -> Int {
-        max(candidate, minimumIntervalMinutes)
+        min(max(candidate, minimumIntervalMinutes), maximumIntervalMinutes)
     }
 
     /// Applies a new `intervalMinutes`, clamped to the floor. Editing this
@@ -58,5 +63,21 @@ final class DisplayConfig {
     /// already in the queue (ADR 0002, decision 3).
     func updateIntervalMinutes(_ candidate: Int) {
         intervalMinutes = DisplayConfig.clampedIntervalMinutes(candidate)
+    }
+
+    func updateSleep(enabled: Bool, startMinute: Int, endMinute: Int) throws {
+        guard (0...1_439).contains(startMinute), (0...1_439).contains(endMinute),
+              !enabled || startMinute != endMinute else { throw ScheduleError.malformed }
+        sleepEnabled = enabled
+        sleepStartMinute = startMinute
+        sleepEndMinute = endMinute
+    }
+
+    func validateSleep() throws {
+        guard (0...1_439).contains(sleepStartMinute),
+              (0...1_439).contains(sleepEndMinute),
+              !sleepEnabled || sleepStartMinute != sleepEndMinute else {
+            throw ScheduleError.malformed
+        }
     }
 }

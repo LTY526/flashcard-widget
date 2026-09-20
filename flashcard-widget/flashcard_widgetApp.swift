@@ -1,39 +1,34 @@
-//
-//  flashcard_widgetApp.swift
-//  flashcard-widget
-//
-//  Created by User on 9/12/26.
-//
-
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 @main
 struct flashcard_widgetApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Deck.self,
-            NoteType.self,
-            NoteTypeField.self,
-            Note.self,
-            Card.self,
-            MediaItem.self,
-            DisplayConfig.self,
-            HistoryEntry.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    private let sharedModelContainer: ModelContainer?
+    private let libraryError: String?
 
+    init() {
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            sharedModelContainer = try SharedModelContainer.makeShared()
+            libraryError = nil
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            sharedModelContainer = nil
+            libraryError = String(describing: error)
+            print("Unable to open shared library: \(error)")
         }
-    }()
+    }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            if let sharedModelContainer {
+                ContentView()
+                    .modelContainer(sharedModelContainer)
+            } else {
+                ContentUnavailableView(
+                    "Unable to Open Library",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(libraryError ?? "Flashcards are unavailable. Please reopen the app.")
+                )
+            }
         }
-        .modelContainer(sharedModelContainer)
     }
 }

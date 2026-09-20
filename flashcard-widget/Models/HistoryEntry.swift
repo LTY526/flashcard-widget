@@ -5,8 +5,8 @@
 //  One slot in a deck's own scheduled card queue/history (ADR 0002,
 //  decision 4). `sequence` (monotonic per-deck, from
 //  `Deck.nextHistorySequence`) is the only thing "next"/"previous" is ever
-//  defined in terms of -- `projectedAt` is purely informational and never
-//  compared for ordering. `card` is optional and nullify-on-delete (see
+//  defined in terms of. ADR 0003 supersedes the old timestamp rule:
+//  `projectedAt` derives due status but never identity/order. `card` is optional and nullify-on-delete (see
 //  `Card.historyEntries`): a `HistoryEntry` whose card has been hard-deleted
 //  (via `DeckRemover`'s cross-deck note cleanup) still exists and still
 //  shows in History, just without card text to render.
@@ -19,8 +19,7 @@ import SwiftData
 final class HistoryEntry {
     var sequence: Int = 0
     /// The wall-clock time this entry becomes, or became, its deck's
-    /// current card. Advisory/informational only -- never compared for
-    /// ordering, which is always defined in terms of `sequence`.
+    /// current card. It derives due status; ordering remains `sequence`.
     var projectedAt: Date = Date()
 
     var card: Card?

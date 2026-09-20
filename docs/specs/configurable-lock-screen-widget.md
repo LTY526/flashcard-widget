@@ -1,5 +1,10 @@
 # configurable-lock-screen-widget
 
+> Superseded in part by
+> [sleep-aware-schedule-and-four-field-display](sleep-aware-schedule-and-four-field-display.md):
+> its sleep-aware dates, persisted initial current card, three widget rows, and
+> Schedule screen requirements replace conflicting statements below.
+
 ## Goal
 
 Add a per-instance configurable `.accessoryRectangular` Lock Screen widget that

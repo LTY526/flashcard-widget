@@ -1,5 +1,14 @@
 # active-card-deck-management
 
+> Superseded for scheduling, pause/resume, and navigation behavior by
+> [configurable-lock-screen-widget](configurable-lock-screen-widget.md) and
+> ADR 0003. Back is removed, initial scheduling starts at injected `now`,
+> and timestamps derive reached status while `sequence` remains strict order.
+> [sleep-aware-schedule-and-four-field-display](sleep-aware-schedule-and-four-field-display.md)
+> further supersedes it: initial state is one current plus ten future rows,
+> automatic dates exclude sleep, setting edits rebuild future rows, and Schedule
+> replaces History as the deck destination.
+
 ## Goal
 
 Give every deck its own scheduled card queue (with projected timestamps),
