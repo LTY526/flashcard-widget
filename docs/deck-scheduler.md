@@ -1,5 +1,7 @@
 # DeckScheduler
 
+[Documentation index](README.md) | [System overview](architecture/system-overview.md) | [Widget timeline](architecture/widget-timeline.md)
+
 DeckScheduler owns the persisted order and timing of cards for each deck. The
 app and widget do not independently invent a current card: both interpret the
 same HistoryEntry graph in the shared SwiftData database.
