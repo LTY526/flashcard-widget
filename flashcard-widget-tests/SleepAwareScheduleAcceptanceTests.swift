@@ -183,7 +183,7 @@ struct SleepAwareScheduleAcceptanceTests {
         #expect(deck.activeHistoryEntry?.projectedAt == now)
         #expect(deck.highestReachedSequence == 1)
         let future = deck.historyEntries.filter { $0.sequence > 1 }.sorted { $0.sequence < $1.sequence }
-        #expect(future.count == 10)
+        #expect(future.count == DeckScheduler.queueSize)
         #expect(future.first?.projectedAt == date(year: 2026, month: 1, day: 2, hour: 7, minute: 30))
     }
 
@@ -224,7 +224,7 @@ struct SleepAwareScheduleAcceptanceTests {
         #expect(deck.activeHistoryEntry?.sequence == 2)
         #expect(deck.activeHistoryEntry?.projectedAt == resumedAt)
         let future = deck.historyEntries.filter { $0.sequence > 2 }.sorted { $0.sequence < $1.sequence }
-        #expect(future.count == 10)
+        #expect(future.count == DeckScheduler.queueSize)
         #expect(future.first?.projectedAt == date(year: 2026, month: 1, day: 2, hour: 7, minute: 30))
         let sleep = SleepSchedule(enabled: true, startMinute: 1_320, endMinute: 420)
         let everyFutureDateIsAwake = try future.allSatisfy {
@@ -243,7 +243,7 @@ struct SleepAwareScheduleAcceptanceTests {
         try DeckScheduler.rebuildFuture(for: deck, in: context, now: edit, timeZone: utc)
         #expect(deck.activeHistoryEntry?.persistentModelID == currentID)
         let future = deck.historyEntries.filter { $0.sequence > 1 }.sorted { $0.sequence < $1.sequence }
-        #expect(future.count == 10)
+        #expect(future.count == DeckScheduler.queueSize)
         #expect(future.first?.projectedAt == edit.addingTimeInterval(1_800))
     }
 
@@ -336,7 +336,7 @@ struct SleepAwareScheduleAcceptanceTests {
         #expect(deck.highestReachedSequence == 1)
         #expect(config.scheduleTimeZoneIdentifier == TimeZone.autoupdatingCurrent.identifier)
         let future = deck.historyEntries.filter { $0.sequence > 1 }
-        #expect(future.count == 10)
+        #expect(future.count == DeckScheduler.queueSize)
         #expect(future.allSatisfy { $0.projectedAt > start })
     }
 

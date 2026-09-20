@@ -20,7 +20,11 @@ enum DeckScheduler {
     /// A non-paused deck with at least one active card always has at
     /// least this many `HistoryEntry` rows queued (generated but not yet
     /// reached).
-    static let queueSize = 10
+    static let queueSize = 100
+
+    /// Past schedule rows remain intentionally paginated in small pages even
+    /// though the future queue is much larger.
+    static let historyPageSize = 10
 
     /// Runs the complete foreground transaction in a disposable context.
     /// Callers acquire the cross-process exclusive lock before invoking this.
@@ -259,9 +263,7 @@ enum DeckScheduler {
         }
 
         let intervalSeconds = try validatedIntervalSeconds(for: deck)
-
         targetEntry.projectedAt = now
-
         let laterEntries = deck.historyEntries
             .filter { $0.sequence > targetSequence }
             .sorted { $0.sequence < $1.sequence }
@@ -270,11 +272,33 @@ enum DeckScheduler {
             anchor = try scheduledDate(after: anchor, seconds: intervalSeconds, deck: deck)
             entry.projectedAt = anchor
         }
-
         deck.activeHistoryEntry = targetEntry
         deck.highestReachedSequence = targetSequence
-
         try topUp(deck, in: modelContext, now: now)
+    }
+
+    /// Advances the persisted current pointer without rebuilding the future
+    /// queue. Deck Detail uses this lightweight path for rapid taps, then
+    /// debounces `rebuildFuture` so several taps cause one expensive rebuild.
+    static func advanceImmediately(_ deck: Deck, in modelContext: ModelContext, now: Date) throws {
+        guard !deck.isPaused, !deck.activeCards.isEmpty else { return }
+        let needsInitialSeed = deck.activeHistoryEntry == nil &&
+            deck.highestReachedSequence == nil && deck.historyEntries.isEmpty
+        if needsInitialSeed {
+            try topUp(deck, in: modelContext, now: now)
+            return
+        }
+        try reconcileProgress(deck, in: modelContext, now: now)
+
+        let (targetSequence, overflow) = (deck.highestReachedSequence ?? 0).addingReportingOverflow(1)
+        guard !overflow else { throw ScheduleError.malformed }
+        guard let targetEntry = deck.historyEntries.first(where: { $0.sequence == targetSequence }) else {
+            return
+        }
+
+        targetEntry.projectedAt = now
+        deck.activeHistoryEntry = targetEntry
+        deck.highestReachedSequence = targetSequence
     }
 
     // MARK: - Reset primitive (order change / soft-delete reconciliation)
@@ -476,6 +500,11 @@ enum DeckScheduler {
     }
 
     static func reconcile(_ deck: Deck, in modelContext: ModelContext, now: Date) throws {
+        try reconcileProgress(deck, in: modelContext, now: now)
+        try topUp(deck, in: modelContext, now: now)
+    }
+
+    private static func reconcileProgress(_ deck: Deck, in modelContext: ModelContext, now: Date) throws {
         guard !deck.isPaused, !deck.activeCards.isEmpty else { return }
         _ = try validatedIntervalSeconds(for: deck)
         if let config = deck.displayConfig,
@@ -497,7 +526,6 @@ enum DeckScheduler {
             deck.highestReachedSequence = effective.sequence
             deck.activeHistoryEntry = effective
         }
-        try topUp(deck, in: modelContext, now: now)
     }
 
     static func setPaused(_ paused: Bool, deck: Deck, in modelContext: ModelContext, now: Date) throws {

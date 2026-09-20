@@ -5,7 +5,7 @@
 > ADR 0003. Back is removed, initial scheduling starts at injected `now`,
 > and timestamps derive reached status while `sequence` remains strict order.
 > [sleep-aware-schedule-and-four-field-display](sleep-aware-schedule-and-four-field-display.md)
-> further supersedes it: initial state is one current plus ten future rows,
+> further supersedes it: initial state is one current plus 100 future rows,
 > automatic dates exclude sleep, setting edits rebuild future rows, and Schedule
 > replaces History as the deck destination.
 
@@ -49,7 +49,7 @@ here.
 - [ ] Unpausing a deck resumes normal queue maintenance (see below) the
       next time that deck's schedule is read — including topping a
       short/empty queue (left short by a discard that ran while paused)
-      back up to 10, using the same reference-entry rule as any other
+      back up to 100, using the same reference-entry rule as any other
       top-up (chain off the pointer's entry if non-`nil`, else the
       empty-queue rule) — this is the case a `highestReachedSequence`-based
       condition would get wrong, since a soft-delete-cleared pointer can
@@ -64,12 +64,12 @@ here.
       current card — both assert the unreached queue is discarded (and, for
       the soft-delete case, the pointer cleared per the usual rule) but
       **not** regenerated while still paused; then, after unpausing,
-      assert the queue tops back up to 10 on the next read.
+      assert the queue tops back up to 100 on the next read.
 - [ ] An automated test chains: pause a deck with history
       (`highestReachedSequence` non-`nil`) → re-import a fixture that
       soft-deletes its current card (pointer clears to `nil`, queue
       discarded, regeneration deferred since paused) → unpause → read the
-      deck's schedule. Asserts the queue regenerates to 10 via the
+      deck's schedule. Asserts the queue regenerates to 100 via the
       empty-queue rule (starting from the lowest-`ankiCardID` active card
       for `.sequential`) without crashing or misbehaving — this is
       specifically the case where `highestReachedSequence` is non-`nil`
@@ -90,7 +90,7 @@ here.
       branch, not just the main upsert loop) — every deck must have exactly
       one config, with no exceptions. Re-importing into an already-existing
       deck does not create a second config.
-- [ ] That deck's initial schedule (10 `HistoryEntry` rows, via the
+- [ ] That deck's initial schedule (100 future `HistoryEntry` rows plus current, via the
       empty-queue generation rule below) is seeded once, later in the same
       import, after that deck's cards have been upserted — not at the
       `Deck`-creation site itself, which runs before any card exists for it
@@ -100,11 +100,11 @@ here.
       deck does not reseed its schedule.
 - [ ] An automated test imports a fixture that creates decks via both the
       main upsert loop and the "Unknown Deck" fallback branch, and asserts
-      every resulting `Deck` has exactly one `DisplayConfig` and exactly 10
+      every resulting `Deck` has exactly one `DisplayConfig` and exactly 100
       `HistoryEntry` rows.
 - [ ] An automated test re-imports the same fixture a second time and
       asserts each deck still has exactly one `DisplayConfig` (not two) and
-      its schedule wasn't reseeded (the original 10 entries' identities are
+      its schedule wasn't reseeded (the original entries' identities are
       unchanged).
 - [ ] `intervalMinutes` has a floor of 15 minutes: the edit UI (below)
       rejects or clamps lower values, and its copy states the value is
@@ -143,11 +143,11 @@ here.
 - [ ] **Queue maintenance ("top-up"):** whenever a non-paused deck's
       schedule is read (opening Deck Detail, the deck list, right after
       import, right after unpausing, as part of a Next/Back tap), ensure at
-      least 10 `HistoryEntry` rows exist with `sequence >
+      least 100 `HistoryEntry` rows exist with `sequence >
       highestReachedSequence` (or, if `highestReachedSequence` is `nil`,
-      at least 10 rows exist at all), generating more as needed. If the
+      at least 100 rows exist at all), generating more as needed. If the
       deck has zero active cards, there is nothing to generate — top-up
-      is a no-op, and the deck simply stays below 10 (possibly at 0) until
+      is a no-op, and the deck simply stays below 100 (possibly at 0) until
       it has an active card again; this mirrors Next's zero-active-card
       handling below.
       - The reference entry to chain a new one off is found by checking,
@@ -221,7 +221,7 @@ here.
 - [ ] **Config `order` change:** discards every `HistoryEntry` with
       `sequence > highestReachedSequence` for that deck (the unreached
       queue only — the current entry and all of history are untouched).
-      This discard always runs. Regeneration (10 fresh entries per the new
+      This discard always runs. Regeneration (100 fresh entries per the new
       `order`, using the same reference-entry rule as top-up above — chain
       off the pointer's entry, or the empty-queue rule if **the pointer**,
       not `highestReachedSequence`, is `nil`) runs immediately **only if
@@ -239,7 +239,7 @@ here.
       entry's card was among those soft-deleted, `activeHistoryEntry` is
       additionally cleared to `nil` — **without deleting that
       `HistoryEntry` row**, which remains visible in History. If the deck
-      isn't paused, the queue is then regenerated back to 10 (via the
+      isn't paused, the queue is then regenerated back to 100 (via the
       empty-queue rule if the pointer is now `nil`, or chained off the
       still-valid current entry if it isn't), **synchronously, before that
       import call returns** — not deferred to whichever screen happens to
@@ -253,7 +253,7 @@ here.
 - [ ] An automated test asserts `.sequential` order visits every active
       card of a small fixture deck exactly once before repeating, in
       `ankiCardID` order.
-- [ ] An automated test seeds a deck with a full 10-entry queue, taps Next
+- [ ] An automated test seeds a deck with a full 100-entry queue, taps Next
       once (consuming 1, leaving 9 pre-existing unreached entries), and
       asserts the single entry top-up generates to replace it chains off
       the highest-`sequence` entry among those 9 pre-existing ones — not
@@ -275,7 +275,7 @@ here.
       rather than read-time top-up.
 - [ ] An automated test changes a deck's `order` and asserts: every entry
       with `sequence > highestReachedSequence` before the change is gone
-      afterward, exactly 10 new entries exist following the new `order`,
+      afterward, exactly 100 new entries exist following the new `order`,
       and the current entry plus all of history is unchanged.
 - [ ] An automated test re-imports a fixture with one note (and its card)
       removed, where that card was the deck's current entry, and asserts:
@@ -287,7 +287,7 @@ here.
       referenced only by an *unreached, queued* (not-yet-current)
       `HistoryEntry`, and asserts: the pointer is unaffected, every entry
       that was in the unreached queue before the import (including that
-      contaminated one) is gone, and exactly 10 freshly generated entries
+      contaminated one) is gone, and exactly 100 freshly generated entries
       exist afterward.
 
 ### Per-deck history screen

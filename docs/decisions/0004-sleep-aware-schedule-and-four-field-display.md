@@ -35,7 +35,7 @@
    Upcoming/Past segmented control. Upcoming shows the current card first with a
    Current badge, then unreached entries in ascending sequence/date order. Past
    excludes the current entry and shows earlier reached entries newest-first.
-   Upcoming is read-only and shows the complete stored queue (at most ten future
+   Upcoming is read-only and shows the complete stored queue (at most 100 future
    rows), so it does not paginate or generate rows. Past is read-only and
    paginated ten rows at a time.
 7. Editing interval, order, or sleep settings rebuilds only the unreached queue
@@ -65,6 +65,11 @@
     changes, saves the entire batch once, and is discarded on every failure.
     Schedule reads only the reconciled persisted pointer/watermark, never a
     virtual due-prefix projection.
+12. The persistent look-ahead is 100 unreached entries per active deck; the
+    WidgetKit timeline remains current plus at most four future entries. Deck
+    Detail Next saves its pointer/watermark immediately, then debounces the
+    100-row future rebuild for one second after the last tap. Leaving the view
+    or starting another schedule mutation flushes the pending rebuild.
 
 ## Why
 

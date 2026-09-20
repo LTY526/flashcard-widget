@@ -33,17 +33,17 @@ struct ConfigurableWidgetAcceptanceTests {
         return (context, deck)
     }
 
-    @Test("initial seed persists a current card plus ten future entries")
+    @Test("initial seed persists a current card plus 100 future entries")
     func initialQueueUsesInjectedNow() throws {
         let (context, deck) = try fixture()
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         try DeckScheduler.ensureSchedule(for: deck, in: context, now: now)
         let entries = deck.historyEntries.sorted { $0.sequence < $1.sequence }
-        #expect(entries.count == 11)
+        #expect(entries.count == DeckScheduler.queueSize + 1)
         #expect(deck.activeHistoryEntry?.sequence == 1)
         #expect(deck.highestReachedSequence == 1)
         #expect(entries.first?.projectedAt == now)
-        #expect(entries.last?.projectedAt == now.addingTimeInterval(10 * 15 * 60))
+        #expect(entries.last?.projectedAt == now.addingTimeInterval(TimeInterval(DeckScheduler.queueSize * 15 * 60)))
     }
 
     @Test("selector advances through due prefix and emits no more than five cards")
@@ -110,7 +110,7 @@ struct ConfigurableWidgetAcceptanceTests {
         let unreached = deck.historyEntries
             .filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
             .sorted { $0.sequence < $1.sequence }
-        #expect(unreached.count == 10)
+        #expect(unreached.count == DeckScheduler.queueSize)
         #expect(unreached.first?.sequence == 3)
         #expect(unreached.first?.projectedAt == resumedAt.addingTimeInterval(15 * 60))
     }
@@ -131,7 +131,33 @@ struct ConfigurableWidgetAcceptanceTests {
             .filter { $0.sequence > 4 }
             .sorted { $0.sequence < $1.sequence }
         #expect(later.first?.projectedAt == now.addingTimeInterval(15 * 60))
-        #expect(later.count == 10)
+        #expect(later.count == DeckScheduler.queueSize)
+    }
+
+    @Test("rapid Next advances immediately and defers the full queue rebuild")
+    func immediateAdvanceDefersFutureRebuild() throws {
+        let (context, deck) = try fixture()
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        try DeckScheduler.ensureSchedule(for: deck, in: context, now: start)
+        let before = Dictionary(uniqueKeysWithValues: deck.historyEntries
+            .filter { $0.sequence > 2 }
+            .map { ($0.sequence, $0.projectedAt) })
+        let tappedAt = start.addingTimeInterval(60)
+
+        try DeckScheduler.advanceImmediately(deck, in: context, now: tappedAt)
+
+        #expect(deck.activeHistoryEntry?.sequence == 2)
+        #expect(deck.activeHistoryEntry?.projectedAt == tappedAt)
+        let deferredFuture = deck.historyEntries.filter { $0.sequence > 2 }
+        #expect(deferredFuture.count == DeckScheduler.queueSize - 1)
+        #expect(deferredFuture.allSatisfy { before[$0.sequence] == $0.projectedAt })
+
+        try DeckScheduler.rebuildFuture(for: deck, in: context, now: tappedAt)
+        let rebuilt = deck.historyEntries
+            .filter { $0.sequence > 2 }
+            .sorted { $0.sequence < $1.sequence }
+        #expect(rebuilt.count == DeckScheduler.queueSize)
+        #expect(rebuilt.first?.projectedAt == tappedAt.addingTimeInterval(15 * 60))
     }
 
     @Test("deep link grammar is canonical")

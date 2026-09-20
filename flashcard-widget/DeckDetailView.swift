@@ -16,6 +16,8 @@ struct DeckDetailView: View {
     @Bindable var deck: Deck
     let scheduleRevision: Int
     @Environment(\.modelContext) private var modelContext
+    @State private var pendingRebuildTask: Task<Void, Never>?
+    @State private var pendingRebuildAnchor: Date?
 
     init(deck: Deck, scheduleRevision: Int = 0) {
         self.deck = deck
@@ -28,16 +30,16 @@ struct DeckDetailView: View {
             Section("Current Card") {
                 currentCardContent
                 Button {
+                    let now = Date()
                     do {
                         try ScheduleFileLock.shared().withExclusiveLock {
-                            try DeckScheduler.next(deck, in: modelContext, now: Date())
+                            try DeckScheduler.advanceImmediately(deck, in: modelContext, now: now)
                             try modelContext.save()
                         }
-                        Task {
-                            await WidgetTimelineReloader.shared.scheduleReload()
-                        }
+                        scheduleFutureRebuild(after: now)
                     } catch {
                         // Keep the current card when advancing or saving fails.
+                        modelContext.rollback()
                     }
                 } label: {
                     Label("Next", systemImage: "arrow.right")
@@ -50,6 +52,7 @@ struct DeckDetailView: View {
                     get: { deck.isPaused },
                     set: { newValue in
                         guard newValue != deck.isPaused else { return }
+                        flushPendingFutureRebuild()
                         do {
                             try ScheduleFileLock.shared().withExclusiveLock {
                                 try DeckScheduler.setPaused(
@@ -74,7 +77,11 @@ struct DeckDetailView: View {
             }
 
             if let config = deck.displayConfig {
-                DisplayConfigSection(deck: deck, config: config)
+                DisplayConfigSection(
+                    deck: deck,
+                    config: config,
+                    beforeScheduleMutation: flushPendingFutureRebuild
+                )
             }
 
             Section {
@@ -90,6 +97,40 @@ struct DeckDetailView: View {
             if deck.displayConfig == nil {
                 deck.displayConfig = DisplayConfig()
             }
+        }
+        .onDisappear {
+            flushPendingFutureRebuild()
+        }
+    }
+
+    private func scheduleFutureRebuild(after anchor: Date) {
+        pendingRebuildTask?.cancel()
+        pendingRebuildAnchor = anchor
+        pendingRebuildTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            rebuildFutureQueue()
+        }
+    }
+
+    private func flushPendingFutureRebuild() {
+        guard pendingRebuildAnchor != nil else { return }
+        pendingRebuildTask?.cancel()
+        rebuildFutureQueue()
+    }
+
+    private func rebuildFutureQueue() {
+        guard let anchor = pendingRebuildAnchor else { return }
+        pendingRebuildAnchor = nil
+        pendingRebuildTask = nil
+        do {
+            try ScheduleFileLock.shared().withExclusiveLock {
+                try DeckScheduler.rebuildFuture(for: deck, in: modelContext, now: anchor)
+                try modelContext.save()
+            }
+            Task { await WidgetTimelineReloader.shared.scheduleReload() }
+        } catch {
+            modelContext.rollback()
         }
     }
 
@@ -121,6 +162,7 @@ struct DeckDetailView: View {
 private struct DisplayConfigSection: View {
     let deck: Deck
     @Bindable var config: DisplayConfig
+    let beforeScheduleMutation: () -> Void
     @Environment(\.modelContext) private var modelContext
     @State private var intervalText: String = ""
 
@@ -190,6 +232,7 @@ private struct DisplayConfigSection: View {
     }
 
     private func applyScheduleEdit(_ edit: () throws -> Void) {
+        beforeScheduleMutation()
         do {
             try ScheduleFileLock.shared().withExclusiveLock {
                 try edit()

@@ -125,7 +125,7 @@ struct DeckHistoryView: View {
     let scheduleRevision: Int
     @Environment(\.modelContext) private var modelContext
     @State private var tab: Tab = .upcoming
-    @State private var pastLimit = DeckScheduler.queueSize
+    @State private var pastLimit = DeckScheduler.historyPageSize
     @State private var snapshot: ScheduleSnapshot?
 
     init(deck: Deck, scheduleRevision: Int = 0) {
@@ -149,7 +149,7 @@ struct DeckHistoryView: View {
                 List {
                     rows(snapshot.pastPage(limit: pastLimit), currentBadge: false)
                     if pastLimit < snapshot.past.count {
-                        Button("Load More") { pastLimit += DeckScheduler.queueSize }
+                        Button("Load More") { pastLimit += DeckScheduler.historyPageSize }
                     }
                 }
             } else {
