@@ -96,7 +96,7 @@ in-app detail, and present past and upcoming cards together in a Schedule screen
       changes, and manual Next use the same awake-time addition function for all
       automatic successors; sequence order remains unchanged.
 - [ ] Enabling or editing sleep settings preserves reached rows and the current
-      pointer, discards only unreached rows, then regenerates ten unreached rows
+      pointer, discards only unreached rows, then regenerates 100 unreached rows
       from injected `now` under the new settings. Whether `now` is awake or
       asleep, the first successor is one full awake interval after `now` (sleep
       portions excluded); it is never immediate and does not preserve remaining
@@ -105,7 +105,7 @@ in-app detail, and present past and upcoming cards together in a Schedule screen
 - [ ] On activation, compare the current time-zone identifier with
       `scheduleTimeZoneIdentifier` before reconciliation. If changed, preserve
       current/reached rows and watermark, discard every unreached old-zone row,
-      regenerate ten successors from activation `now` using the new zone, store
+      regenerate 100 successors from activation `now` using the new zone, store
       the new identifier, and then reconcile (which advances nothing newly
       generated). Tests prove an old-zone timestamp that is due in absolute time
       does not advance progress after travel.
@@ -123,6 +123,12 @@ in-app detail, and present past and upcoming cards together in a Schedule screen
       reschedules every unreached successor through awake-time addition. Repeated
       manual Next actions may create multiple reached sleep-window timestamps,
       while every remaining unreached date stays outside sleep.
+- [ ] Deck Detail Next persists the current pointer/watermark immediately but
+      debounces rebuilding the 100 future rows until one second after the last
+      rapid tap. Another tap replaces the pending rebuild. Leaving Deck Detail,
+      pausing/resuming, or editing schedule settings flushes it immediately.
+      The final rebuild anchors successors at the last tap time, saves once,
+      and requests one debounced widget reload.
 - [ ] The provider receives current plus at most four future sleep-adjusted
       entries. A deterministic provider test proves the sleep-spanning card stays
       visible until its shifted wake-side date.
@@ -162,7 +168,7 @@ in-app detail, and present past and upcoming cards together in a Schedule screen
 - [ ] Upcoming is read-only and ordered ascending. Its first row is the current
       entry with a `Current` badge, followed by unreached scheduled entries with
       their local due date/time. It shows the complete persisted unreached queue
-      (at most ten rows), has no pagination or Load More control, and never tops
+      (at most 100 rows), has no pagination or Load More control, and never tops
       up or synthesizes entries while viewing. It has a clear empty state when no
       current or future entries exist.
 - [ ] Past excludes the active current entry, includes only reached entries with
@@ -212,8 +218,8 @@ in-app detail, and present past and upcoming cards together in a Schedule screen
 - Editing, reordering, deleting, or jumping to cards from the Schedule screen.
 - Quaternary text in the widget, more than three widget rows, images, audio, or
   widget families other than `.accessoryRectangular`.
-- Changing the existing ten-entry persistent queue or five-entry WidgetKit
-  timeline limits.
+- Changing the five-entry WidgetKit timeline limit. The persistent queue now
+  keeps 100 future entries.
 
 ## Verifier objections (overruled by user)
 

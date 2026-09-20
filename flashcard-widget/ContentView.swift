@@ -7,17 +7,64 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
+struct ScheduleRefreshState {
+    private(set) var revision = 0
+
+    mutating func markRefreshed() {
+        revision &+= 1
+    }
+}
+
+struct ActivationGate {
+    private enum State {
+        case reconciling
+        case failed
+        case ready
+    }
+
+    private var state: State = .reconciling
+
+    var blocksContent: Bool { state != .ready }
+    var isReconciling: Bool { state == .reconciling }
+
+    mutating func beginReconciliation() {
+        state = .reconciling
+    }
+
+    mutating func reconciliationSucceeded() {
+        state = .ready
+    }
+
+    mutating func reconciliationFailed() {
+        state = .failed
+    }
+}
+
+enum ImportOperation {
+    static func run<Result>(
+        _ operation: () throws -> Result,
+        reload: () async -> Void
+    ) async rethrows -> Result {
+        let result = try operation()
+        await reload()
+        return result
+    }
+}
+
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Deck.name) private var decks: [Deck]
 
     @State private var isShowingFileImporter = false
     @State private var isImporting = false
     @State private var isRemoving = false
+    @State private var activationGate = ActivationGate()
     @State private var importErrorMessage: String?
     @State private var noteTypeNeedingMapping: NoteType?
     @State private var pendingNoteTypeIDsNeedingMapping: [PersistentIdentifier] = []
     @State private var deckPendingRemoval: Deck?
+    @State private var scheduleRefreshState = ScheduleRefreshState()
 
     private var apkgContentType: UTType {
         UTType(importedAs: "net.ankiweb.apkg", conformingTo: .zip)
@@ -36,7 +83,7 @@ struct ContentView: View {
                     List {
                         ForEach(decks) { deck in
                             NavigationLink {
-                                DeckDetailView(deck: deck)
+                                DeckDetailView(deck: deck, scheduleRevision: scheduleRefreshState.revision)
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading) {
@@ -96,11 +143,6 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .onAppear {
-                        for deck in decks {
-                            DeckScheduler.readSchedule(for: deck, in: modelContext)
-                        }
-                    }
                 }
             }
             .navigationTitle("Decks")
@@ -117,14 +159,32 @@ struct ContentView: View {
                     }
                 }
             }
-            .disabled(isImporting || isRemoving)
+            .disabled(isImporting || isRemoving || activationGate.blocksContent)
             .overlay {
-                if isImporting || isRemoving {
+                if isImporting || isRemoving || activationGate.blocksContent {
                     ZStack {
                         Color.black.opacity(0.05)
-                        ProgressView(isImporting ? "Importing deck…" : "Removing deck…")
+                        if activationGate.isReconciling {
+                            ProgressView("Updating schedule…")
+                                .padding()
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        } else if activationGate.blocksContent {
+                            VStack(spacing: 12) {
+                                Text("Schedule update failed")
+                                    .font(.headline)
+                                Button("Try Again") {
+                                    activationGate.beginReconciliation()
+                                    Task { await reconcileOnActivation() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        } else {
+                            ProgressView(isImporting ? "Importing deck…" : "Removing deck…")
+                                .padding()
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        }
                     }
                     .ignoresSafeArea()
                 }
@@ -171,6 +231,36 @@ struct ContentView: View {
                 FieldMappingView(noteType: noteType, onFinished: presentNextMappingPromptIfNeeded)
             }
         }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            activationGate.beginReconciliation()
+            Task { await reconcileOnActivation() }
+        }
+        .task {
+            if scenePhase == .active { await reconcileOnActivation() }
+        }
+    }
+
+    private func reconcileOnActivation() async {
+        do {
+            let lock = try ScheduleFileLock.shared()
+            let changed = try await lock.withLock(mode: .exclusive) {
+                let container = try SharedModelContainer.makeShared()
+                let now = Date()
+                return try DeckScheduler.reconcileOnActivation(in: container, now: now)
+            }
+            // No controls were interactive during reconciliation, so dropping
+            // stale registered values is safe and forces the visible graph to
+            // refetch the just-committed schedule.
+            modelContext.rollback()
+            modelContext.processPendingChanges()
+            scheduleRefreshState.markRefreshed()
+            if changed { await WidgetTimelineReloader.shared.scheduleReload() }
+            activationGate.reconciliationSucceeded()
+        } catch {
+            activationGate.reconciliationFailed()
+            importErrorMessage = "Couldn't update the schedule. Please try again."
+        }
     }
 
     private func handleFileImportResult(_ result: Result<[URL], Error>) {
@@ -194,7 +284,13 @@ struct ContentView: View {
         Task.detached(priority: .userInitiated) {
             let backgroundContext = ModelContext(container)
             do {
-                let importResult = try ApkgImporter.importApkg(fileURL: url, modelContext: backgroundContext)
+                let importResult = try await ImportOperation.run({
+                    try ApkgImporter.importApkg(fileURL: url, modelContext: backgroundContext)
+                }, reload: {
+                    // Import and re-import can replace cards and rebuild schedules.
+                    // Invalidate WidgetKit only after the importer has committed the new graph.
+                    await WidgetTimelineReloader.shared.scheduleReload()
+                })
                 await MainActor.run {
                     isImporting = false
                     pendingNoteTypeIDsNeedingMapping = importResult.noteTypesNeedingMapping
@@ -255,9 +351,15 @@ struct ContentView: View {
     /// unrelated read) by running the same top-up check any other
     /// schedule read performs.
     private func togglePause(_ deck: Deck) {
-        deck.isPaused.toggle()
-        if !deck.isPaused {
-            DeckScheduler.readSchedule(for: deck, in: modelContext)
+        do {
+            try ScheduleFileLock.shared().withExclusiveLock {
+                try DeckScheduler.setPaused(!deck.isPaused, deck: deck, in: modelContext, now: Date())
+                try modelContext.save()
+            }
+            Task { await WidgetTimelineReloader.shared.scheduleReload() }
+        } catch {
+            modelContext.rollback()
+            importErrorMessage = "Couldn't update the schedule. Please try again."
         }
     }
 

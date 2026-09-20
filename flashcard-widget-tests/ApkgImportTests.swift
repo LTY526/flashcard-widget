@@ -26,6 +26,25 @@ private func fetchAll<T: PersistentModel>(_ type: T.Type, in context: ModelConte
 @MainActor
 @Suite("apkg import")
 struct ApkgImportTests {
+    private actor ReloadCounter {
+        private(set) var count = 0
+        func request() { count += 1 }
+    }
+
+    @Test("successful import and re-import each request one widget reload; failure requests none")
+    func importReloadOrchestration() async throws {
+        enum Failure: Error { case expected }
+        let counter = ReloadCounter()
+
+        _ = await ImportOperation.run({ "import" }, reload: { await counter.request() })
+        #expect(await counter.count == 1)
+        _ = await ImportOperation.run({ "re-import" }, reload: { await counter.request() })
+        #expect(await counter.count == 2)
+        await #expect(throws: Failure.self) {
+            _ = try await ImportOperation.run({ throw Failure.expected }, reload: { await counter.request() })
+        }
+        #expect(await counter.count == 2)
+    }
 
     // MARK: - Both container variants produce expected records
 
@@ -206,7 +225,7 @@ struct ApkgImportTests {
 
     // MARK: - Per-deck DisplayConfig + initial schedule (active-card-deck-management spec)
 
-    @Test("every deck created by import -- via the main upsert loop or the Unknown Deck fallback branch -- gets exactly one DisplayConfig and 10 seeded HistoryEntry rows")
+    @Test("every imported deck gets one DisplayConfig, one current row, and the full future queue")
     func everyCreatedDeckGetsConfigAndSeededSchedule() throws {
         let context = try makeInMemoryContext()
         _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("unknown_deck_fallback"), modelContext: context)
@@ -226,7 +245,7 @@ struct ApkgImportTests {
             #expect(deck.displayConfig?.newCardsADay == 0)
             #expect(deck.displayConfig?.reviewPreviousDayCards == false)
 
-            #expect(deck.historyEntries.count == 10, "\(deck.name) must have its schedule seeded to 10 entries")
+            #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1, "\(deck.name) must have one current and the full future queue")
         }
     }
 
@@ -237,7 +256,7 @@ struct ApkgImportTests {
 
         let deckBefore = try #require(try fetchAll(Deck.self, in: context).first { $0.name == "Known Deck" })
         let originalEntryIDs = Set(deckBefore.historyEntries.map(\.persistentModelID))
-        #expect(originalEntryIDs.count == 10)
+        #expect(originalEntryIDs.count == DeckScheduler.queueSize + 1)
 
         _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("unknown_deck_fallback"), modelContext: context)
 
@@ -277,7 +296,7 @@ struct ApkgImportTests {
         #expect(currentEntry.card == nil || currentEntry.card?.isActive == false)
 
         let unreached = deck.historyEntries.filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
-        #expect(unreached.count == 10, "queue regenerated back to 10, synchronously")
+        #expect(unreached.count == DeckScheduler.queueSize, "queue regenerated to the configured size synchronously")
 
         // A subsequent Next consumes a freshly generated entry, not any
         // pre-existing one.

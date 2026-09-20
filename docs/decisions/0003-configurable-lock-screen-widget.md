@@ -1,5 +1,10 @@
 # 0003: Queue-driven configurable Lock Screen widget
 
+> Superseded in part by [ADR 0004](0004-sleep-aware-schedule-and-four-field-display.md):
+> schedules now exclude per-deck sleep ranges, seeding persists an immediate
+> current card plus 100 future cards, the widget renders tertiary as its third
+> row, and quaternary is the app-only detail role.
+
 ## Decision
 
 1. Add one WidgetKit extension supporting only `.accessoryRectangular`. It uses
@@ -29,7 +34,7 @@
    then applies all reconciliation/top-up plans and saves once. Any failure
    discards the whole context, so no selected deck commits partially.
    Reconciliation advances `highestReachedSequence` and `activeHistoryEntry`
-   through the same contiguous due prefix and restores the queue to 10.
+   through the same contiguous due prefix and restores the queue to 100.
    The app records every reached entry as viewed/history based on its scheduled
    time; it does not try to prove the person looked at the Lock Screen.
 6. Remove Back from the app and scheduler. Without a rewind state,
@@ -76,12 +81,12 @@
 12. Pausing a deck clears its entire unreached queue in the same locked save and
     requests a widget reload. A paused widget contains no queued card entries and
     renders `.paused`. Resuming seeds a new schedule whose first entry is at
-    injected `now`, tops it up to 10, saves once, and reloads WidgetKit. Cards are
+    injected `now`, tops it up to 100, saves once, and reloads WidgetKit. Cards are
     not individually deleted; deleting a whole deck makes a configured widget
     render `.chooseDeck`.
 13. Schedule validation is deliberately simple: fetch all unreached entries
     (`sequence > highestReachedSequence`, or all when nil). There must be at most
-    10. Sorted rows must have unique consecutive sequences beginning at
+    100. Sorted rows must have unique consecutive sequences beginning at
     `(highestReachedSequence ?? 0) + 1`, valid active card/note relationships,
     and strictly increasing dates. Checked arithmetic is required for every
     increment/range; overflow is malformed, never a trap. A short valid queue may
@@ -150,7 +155,7 @@ Group lock—not SwiftData alone—serializes app writes against widget reads.
 - Back UI, `DeckScheduler.back`, `DeckScheduler.canGoBack`, and their tests are
   removed. History data and pagination remain.
 - The provider sends at most five entries even though the persisted queue stays
-  topped up to 10.
+  topped up to 100.
 - Automatic progress is inferred from scheduled dates and may overstate what a
   person actually saw, especially when WidgetKit delays delivery.
 - App activation refreshes the main UI context after locked reconciliation of

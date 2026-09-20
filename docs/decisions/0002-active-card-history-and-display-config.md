@@ -1,5 +1,12 @@
 # 0002: Per-deck active card, history, and display config
 
+> Scheduling and navigation portions are superseded by ADR 0003. Back is
+> removed; initial scheduling begins at injected `now`; sequence remains
+> strict identity/order while timestamps are compared only for due status.
+> Later widget work also supersedes this ADR's references to 10 queued entries:
+> active decks now persist 100 future entries, while history still paginates 10
+> rows at a time.
+
 ## Decision
 
 1. **Active card and history are per-deck, not global.** Every `Deck` gets

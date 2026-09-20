@@ -1,5 +1,10 @@
 # configurable-lock-screen-widget
 
+> Superseded in part by
+> [sleep-aware-schedule-and-four-field-display](sleep-aware-schedule-and-four-field-display.md):
+> its sleep-aware dates, persisted initial current card, three widget rows, and
+> Schedule screen requirements replace conflicting statements below.
+
 ## Goal
 
 Add a per-instance configurable `.accessoryRectangular` Lock Screen widget that
@@ -31,7 +36,7 @@ remains available only inside the app.
       `projectedAt == now`; each following entry is exactly
       `intervalMinutes` later. Sequential/random card choice otherwise retains
       existing behavior, with randomness injectable in tests. Queue top-up
-      remains 10 unreached entries.
+      remains 100 unreached entries.
 - [ ] A plain read-only selector accepts a deck and injected `now`. If
       `highestReachedSequence` is nil, sequence 1 must be valid and due and is
       the base current. If it is non-nil, `activeHistoryEntry` must belong to the
@@ -49,7 +54,7 @@ remains available only inside the app.
 - [ ] Before card-state selection or an unpaused scheduling mutation, fetch every
       unreached row for the deck—`sequence > highestReachedSequence`, or all rows
       when it is nil. More
-      than 10 rows is malformed. After sorting, rows must be unique and exactly
+      than 100 rows is malformed. After sorting, rows must be unique and exactly
       consecutive beginning at checked value `(highestReachedSequence ?? 0) +
       1`, with active card/note relationships and strictly increasing dates.
       Selection uses the effective current plus at most four rows from this
@@ -66,7 +71,7 @@ remains available only inside the app.
       no mutation.
 - [ ] Reconciliation uses the identical contiguous due-prefix rule, advances
       `highestReachedSequence` and `activeHistoryEntry` to the same effective
-      entry, tops the queue to 10, and saves the combined mutations exactly once.
+      entry, tops the queue to 100, and saves the combined mutations exactly once.
       It never changes existing
       `projectedAt` values or moves progress backward. Running it twice with the
       same `now` is idempotent.
@@ -80,7 +85,7 @@ remains available only inside the app.
 - [ ] Pausing a deck atomically removes every unreached queue row, preserves
       reached history, saves once, and reloads the widget. A paused deck has no
       queued timeline cards and renders `.paused`. Resuming atomically seeds a
-      first entry at injected `now`, tops the queue up to 10, saves once, and
+      first entry at injected `now`, tops the queue up to 100, saves once, and
       reloads the widget. Tests cover pause and resume from populated and empty
       queues.
 - [ ] When the app becomes active, it reconciles every unpaused deck, whether or
@@ -189,7 +194,7 @@ remains available only inside the app.
 - [ ] Under the exclusive lock, the app's Next action first reconciles the due
       prefix through injected `now`, advances once from that effective current
       row, anchors the advanced row's `projectedAt` to `now`, reschedules every
-      later row at the configured interval, tops up to 10, and saves once. Only
+      later row at the configured interval, tops up to 100, and saves once. Only
       after a successful save does it reload WidgetKit. A paused, deleted,
       empty, or missing-current deck is a no-op. Tests cover multiple overdue
       cards and ensure Next advances from the time-reconciled current card.

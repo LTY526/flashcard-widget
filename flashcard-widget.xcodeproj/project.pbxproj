@@ -6,7 +6,20 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CE5E4043305AAF6B0087CC96 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CE5E4042305AAF6B0087CC96 /* WidgetKit.framework */; };
+		CE5E4045305AAF6B0087CC96 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CE5E4044305AAF6B0087CC96 /* SwiftUI.framework */; };
+		CE5E4052305AAF6C0087CC96 /* FlashcardWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CE5E4040305AAF6B0087CC96 /* FlashcardWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
+		CE5E4050305AAF6C0087CC96 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CED8689E305585D9009EFF31 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CE5E403F305AAF6B0087CC96;
+			remoteInfo = FlashcardWidgetExtension;
+		};
 		CEE867A5305657CF001C3CB6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = CED8689E305585D9009EFF31 /* Project object */;
@@ -16,12 +29,56 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		CE5E4057305AAF6C0087CC96 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "";
+			dstSubfolder = PlugIns;
+			files = (
+				CE5E4052305AAF6C0087CC96 /* FlashcardWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		CE5E4040305AAF6B0087CC96 /* FlashcardWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FlashcardWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CE5E4042305AAF6B0087CC96 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = /System/Library/Frameworks/WidgetKit.framework; sourceTree = "<absolute>"; };
+		CE5E4044305AAF6B0087CC96 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = /System/Library/Frameworks/SwiftUI.framework; sourceTree = "<absolute>"; };
+		CE5E4058305AAF750087CC96 /* FlashcardWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FlashcardWidgetExtension.entitlements; sourceTree = "<group>"; };
 		CED868A6305585D9009EFF31 /* flashcard-widget.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "flashcard-widget.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		CEE867A1305657CF001C3CB6 /* flashcard-widgetTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "flashcard-widgetTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		CE5E4056305AAF6C0087CC96 /* Exceptions for "FlashcardWidget" folder in "FlashcardWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = CE5E403F305AAF6B0087CC96 /* FlashcardWidgetExtension */;
+		};
+		CE5E405D305AC9EF0087CC96 /* Exceptions for "flashcard-widget" folder in "FlashcardWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Models/Card.swift,
+				Models/Deck.swift,
+				Models/DisplayConfig.swift,
+				Models/DisplayOrder.swift,
+				Models/FieldRole.swift,
+				Models/HistoryEntry.swift,
+				Models/MediaItem.swift,
+				Models/Note.swift,
+				Models/NoteType.swift,
+				Models/NoteTypeField.swift,
+				Persistence/ScheduleFileLock.swift,
+				Persistence/SharedModelContainer.swift,
+				Scheduling/DeckScheduler.swift,
+				Scheduling/ScheduleSelector.swift,
+				Scheduling/SleepSchedule.swift,
+			);
+			target = CE5E403F305AAF6B0087CC96 /* FlashcardWidgetExtension */;
+		};
 		CEE868473056868A001C3CB6 /* Exceptions for "flashcard-widget" folder in "flashcard-widget" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -32,10 +89,19 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		CE5E4046305AAF6B0087CC96 /* FlashcardWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CE5E4056305AAF6C0087CC96 /* Exceptions for "FlashcardWidget" folder in "FlashcardWidgetExtension" target */,
+			);
+			path = FlashcardWidget;
+			sourceTree = "<group>";
+		};
 		CED868A8305585D9009EFF31 /* flashcard-widget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				CEE868473056868A001C3CB6 /* Exceptions for "flashcard-widget" folder in "flashcard-widget" target */,
+				CE5E405D305AC9EF0087CC96 /* Exceptions for "flashcard-widget" folder in "FlashcardWidgetExtension" target */,
 			);
 			path = "flashcard-widget";
 			sourceTree = "<group>";
@@ -48,6 +114,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		CE5E403D305AAF6B0087CC96 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				CE5E4045305AAF6B0087CC96 /* SwiftUI.framework in Frameworks */,
+				CE5E4043305AAF6B0087CC96 /* WidgetKit.framework in Frameworks */,
+			);
+		};
 		CED868A3305585D9009EFF31 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
@@ -61,11 +134,23 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		CE5E4041305AAF6B0087CC96 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				CE5E4042305AAF6B0087CC96 /* WidgetKit.framework */,
+				CE5E4044305AAF6B0087CC96 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		CED8689D305585D9009EFF31 = {
 			isa = PBXGroup;
 			children = (
+				CE5E4058305AAF750087CC96 /* FlashcardWidgetExtension.entitlements */,
 				CED868A8305585D9009EFF31 /* flashcard-widget */,
 				CEE867A2305657CF001C3CB6 /* flashcard-widget-tests */,
+				CE5E4046305AAF6B0087CC96 /* FlashcardWidget */,
+				CE5E4041305AAF6B0087CC96 /* Frameworks */,
 				CED868A7305585D9009EFF31 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -75,6 +160,7 @@
 			children = (
 				CED868A6305585D9009EFF31 /* flashcard-widget.app */,
 				CEE867A1305657CF001C3CB6 /* flashcard-widgetTests.xctest */,
+				CE5E4040305AAF6B0087CC96 /* FlashcardWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -82,6 +168,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		CE5E403F305AAF6B0087CC96 /* FlashcardWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CE5E4053305AAF6C0087CC96 /* Build configuration list for PBXNativeTarget "FlashcardWidgetExtension" */;
+			buildPhases = (
+				CE5E403C305AAF6B0087CC96 /* Sources */,
+				CE5E403D305AAF6B0087CC96 /* Frameworks */,
+				CE5E403E305AAF6B0087CC96 /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				CE5E4046305AAF6B0087CC96 /* FlashcardWidget */,
+			);
+			name = FlashcardWidgetExtension;
+			productName = FlashcardWidgetExtension;
+			productReference = CE5E4040305AAF6B0087CC96 /* FlashcardWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		CED868A5305585D9009EFF31 /* flashcard-widget */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = CED868B3305585DA009EFF31 /* Build configuration list for PBXNativeTarget "flashcard-widget" */;
@@ -89,8 +193,12 @@
 				CED868A2305585D9009EFF31 /* Sources */,
 				CED868A3305585D9009EFF31 /* Frameworks */,
 				CED868A4305585D9009EFF31 /* Resources */,
+				CE5E4057305AAF6C0087CC96 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
+			);
+			dependencies = (
+				CE5E4051305AAF6C0087CC96 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				CED868A8305585D9009EFF31 /* flashcard-widget */,
@@ -131,6 +239,9 @@
 				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					CE5E403F305AAF6B0087CC96 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					CED868A5305585D9009EFF31 = {
 						CreatedOnToolsVersion = 27.0;
 					};
@@ -156,11 +267,17 @@
 			targets = (
 				CED868A5305585D9009EFF31 /* flashcard-widget */,
 				CEE867A0305657CF001C3CB6 /* flashcard-widgetTests */,
+				CE5E403F305AAF6B0087CC96 /* FlashcardWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		CE5E403E305AAF6B0087CC96 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
 		CED868A4305585D9009EFF31 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
@@ -174,6 +291,11 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		CE5E403C305AAF6B0087CC96 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 		CED868A2305585D9009EFF31 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
@@ -187,6 +309,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		CE5E4051305AAF6C0087CC96 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CE5E403F305AAF6B0087CC96 /* FlashcardWidgetExtension */;
+			targetProxy = CE5E4050305AAF6C0087CC96 /* PBXContainerItemProxy */;
+		};
 		CEE867A6305657CF001C3CB6 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = CED868A5305585D9009EFF31 /* flashcard-widget */;
@@ -195,6 +322,92 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		CE5E4054305AAF6C0087CC96 /* Debug configuration for PBXNativeTarget "FlashcardWidgetExtension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = FlashcardWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = UTJKKL2M45;
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FlashcardWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = FlashcardWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.xyz7172.flashcard-widget.widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Debug;
+		};
+		CE5E4055305AAF6C0087CC96 /* Release configuration for PBXNativeTarget "FlashcardWidgetExtension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = FlashcardWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = UTJKKL2M45;
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FlashcardWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = FlashcardWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.xyz7172.flashcard-widget.widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Release;
+		};
 		CED868B1305585DA009EFF31 /* Debug configuration for PBXProject "flashcard-widget" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -321,6 +534,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "flashcard-widget/flashcard-widget.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = UTJKKL2M45;
@@ -341,6 +555,7 @@
 				OTHER_LDFLAGS = "-lsqlite3";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.xyz7172.flashcard-widget";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -357,6 +572,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "flashcard-widget/flashcard-widget.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = UTJKKL2M45;
@@ -377,6 +593,7 @@
 				OTHER_LDFLAGS = "-lsqlite3";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.xyz7172.flashcard-widget";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -441,6 +658,14 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		CE5E4053305AAF6C0087CC96 /* Build configuration list for PBXNativeTarget "FlashcardWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CE5E4054305AAF6C0087CC96 /* Debug configuration for PBXNativeTarget "FlashcardWidgetExtension" */,
+				CE5E4055305AAF6C0087CC96 /* Release configuration for PBXNativeTarget "FlashcardWidgetExtension" */,
+			);
+			defaultConfigurationName = Release;
+		};
 		CED868A1305585D9009EFF31 /* Build configuration list for PBXProject "flashcard-widget" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

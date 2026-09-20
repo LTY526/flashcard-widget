@@ -66,34 +66,35 @@ struct DeckSchedulerTests {
         for id in [1, 2, 3, 4] as [Int64] { _ = makeCard(ankiID: id, deck: deck, in: context) }
         try context.save()
 
-        DeckScheduler.readSchedule(for: deck, in: context)
+        DeckScheduler.ensureSchedule(for: deck, in: context)
         let seeded = deck.historyEntries.sorted { $0.sequence < $1.sequence }
-        #expect(seeded.count == 10)
+        #expect(seeded.count == DeckScheduler.queueSize + 1)
         // Deterministic empty-queue-rule pattern for 4 active cards [1,2,3,4]:
-        // seq 1..10 -> card 1,2,3,4,1,2,3,4,1,2.
-        #expect(seeded.map { $0.card?.ankiCardID } == [1, 2, 3, 4, 1, 2, 3, 4, 1, 2])
+        #expect(Array(seeded.prefix(11)).map { $0.card?.ankiCardID } == [1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3])
         let preExistingProjectedAts = Set(seeded.filter { $0.sequence > 1 }.map(\.projectedAt))
 
         DeckScheduler.next(deck, in: context) // consumes sequence 1 (card 1)
 
         let after = deck.historyEntries.sorted { $0.sequence < $1.sequence }
-        // Sequence 1 (now reached history) plus 10 still-unreached entries.
-        #expect(after.count == 11)
-        let unreachedAfter = after.filter { $0.sequence > 1 }
-        #expect(unreachedAfter.count == 10)
-        let generated = try #require(after.first { $0.sequence == 11 })
+        // Sequence 1 is reconciled because it is due at seed time, then Next
+        // advances sequence 2. The configured number of rows remain unreached.
+        #expect(after.count == DeckScheduler.queueSize + 2)
+        let unreachedAfter = after.filter { $0.sequence > 2 }
+        #expect(unreachedAfter.count == DeckScheduler.queueSize)
+        let generatedSequence = DeckScheduler.queueSize + 2
+        let generated = try #require(after.first { $0.sequence == generatedSequence })
 
         // The highest-sequence entry still unreached before this call was
-        // sequence 10 (card 2) -- chaining off it must produce card 3.
+        // the previous queue tail -- chaining must continue from that card.
         // Chaining off the just-consumed pointer entry (sequence 1, card 1)
         // would wrongly produce card 2 instead. Asserting the exact value
         // (not just "differs from repeat") pins down which rule actually
         // ran.
-        #expect(generated.card?.ankiCardID == 3)
+        #expect(generated.card?.ankiCardID == 2)
         #expect(!preExistingProjectedAts.contains(generated.projectedAt), "must not collide with any pre-existing queued entry's projectedAt")
 
-        let seq10 = try #require(after.first { $0.sequence == 10 })
-        let expectedProjectedAt = seq10.projectedAt.addingTimeInterval(15 * 60)
+        let priorTail = try #require(after.first { $0.sequence == DeckScheduler.queueSize + 1 })
+        let expectedProjectedAt = priorTail.projectedAt.addingTimeInterval(15 * 60)
         #expect(abs(generated.projectedAt.timeIntervalSince(expectedProjectedAt)) < 0.001)
     }
 
@@ -146,8 +147,8 @@ struct DeckSchedulerTests {
         for id in [1, 2, 3] as [Int64] { _ = makeCard(ankiID: id, deck: deck, in: context) }
         try context.save()
 
-        DeckScheduler.readSchedule(for: deck, in: context)
-        #expect(deck.historyEntries.count == 10)
+        DeckScheduler.ensureSchedule(for: deck, in: context)
+        #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1)
 
         var previousHighest: Int?
         for _ in 0..<5 {
@@ -156,7 +157,7 @@ struct DeckSchedulerTests {
             if let previousHighest {
                 #expect(newHighest == previousHighest + 1, "sequence values consumed must be contiguous")
             } else {
-                #expect(newHighest == 1)
+                #expect(newHighest == 2)
             }
             previousHighest = newHighest
 
@@ -190,7 +191,7 @@ struct DeckSchedulerTests {
         let deck = makeDeck(ankiID: 1, in: context)
         _ = makeCard(ankiID: 1, deck: deck, in: context)
         try context.save()
-        DeckScheduler.readSchedule(for: deck, in: context)
+        DeckScheduler.ensureSchedule(for: deck, in: context)
         let beforeSorted = deck.historyEntries.sorted { $0.sequence < $1.sequence }
         let beforeIDs: [PersistentIdentifier] = beforeSorted.map(\.persistentModelID)
         let beforeDates: [Date] = beforeSorted.map(\.projectedAt)
@@ -198,8 +199,8 @@ struct DeckSchedulerTests {
         deck.isPaused = true
         DeckScheduler.next(deck, in: context)
 
-        #expect(deck.activeHistoryEntry == nil)
-        #expect(deck.highestReachedSequence == nil)
+        #expect(deck.activeHistoryEntry?.sequence == 1)
+        #expect(deck.highestReachedSequence == 1)
         let afterSorted = deck.historyEntries.sorted { $0.sequence < $1.sequence }
         let afterIDs: [PersistentIdentifier] = afterSorted.map(\.persistentModelID)
         let afterDates: [Date] = afterSorted.map(\.projectedAt)
@@ -207,42 +208,9 @@ struct DeckSchedulerTests {
         #expect(afterDates == beforeDates)
     }
 
-    // MARK: - Back
-
-    @Test("Back moves the pointer to the next-lower sequence and changes nothing else")
-    func backMovesPointerOnly() throws {
-        let context = try makeInMemoryContext()
-        let deck = makeDeck(ankiID: 1, order: .sequential, in: context)
-        for id in [1, 2] as [Int64] { _ = makeCard(ankiID: id, deck: deck, in: context) }
-        try context.save()
-
-        DeckScheduler.next(deck, in: context)
-        DeckScheduler.next(deck, in: context)
-        DeckScheduler.next(deck, in: context)
-        let highestBeforeBack = deck.highestReachedSequence
-        let entryCountBeforeBack = deck.historyEntries.count
-        #expect(deck.activeHistoryEntry?.sequence == 3)
-
-        #expect(DeckScheduler.canGoBack(deck))
-        DeckScheduler.back(deck)
-        #expect(deck.activeHistoryEntry?.sequence == 2)
-        #expect(deck.highestReachedSequence == highestBeforeBack)
-        #expect(deck.historyEntries.count == entryCountBeforeBack)
-
-        DeckScheduler.back(deck)
-        #expect(deck.activeHistoryEntry?.sequence == 1)
-        #expect(!DeckScheduler.canGoBack(deck), "disabled at the lowest-sequence entry that still exists")
-
-        // Attempting Back again at the floor is a no-op.
-        DeckScheduler.back(deck)
-        #expect(deck.activeHistoryEntry?.sequence == 1)
-        #expect(deck.highestReachedSequence == highestBeforeBack)
-        #expect(deck.historyEntries.count == entryCountBeforeBack)
-    }
-
     // MARK: - Reset primitive: order change
 
-    @Test("changing order discards the unreached queue and regenerates exactly 10 under the new order, leaving the current entry and history untouched")
+    @Test("changing order discards and regenerates the full unreached queue, leaving current and history untouched")
     func orderChangeDiscardsAndRegenerates() throws {
         let context = try makeInMemoryContext()
         let deck = makeDeck(ankiID: 1, order: .sequential, in: context)
@@ -252,14 +220,14 @@ struct DeckSchedulerTests {
         DeckScheduler.next(deck, in: context)
         let currentEntry = try #require(deck.activeHistoryEntry)
         let unreachedIDsBefore = Set(deck.historyEntries.filter { $0.sequence > (deck.highestReachedSequence ?? 0) }.map(\.persistentModelID))
-        #expect(unreachedIDsBefore.count == 10)
+        #expect(unreachedIDsBefore.count == DeckScheduler.queueSize)
 
         deck.displayConfig?.order = .random
         DeckScheduler.handleOrderChange(for: deck, in: context)
 
         let afterChange = deck.historyEntries.sorted { $0.sequence < $1.sequence }
         let unreachedAfter = afterChange.filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
-        #expect(unreachedAfter.count == 10)
+        #expect(unreachedAfter.count == DeckScheduler.queueSize)
         #expect(Set(unreachedAfter.map(\.persistentModelID)).isDisjoint(with: unreachedIDsBefore), "every entry queued before the change is gone")
 
         #expect(deck.activeHistoryEntry?.persistentModelID == currentEntry.persistentModelID)
@@ -282,7 +250,7 @@ struct DeckSchedulerTests {
         #expect(currentEntry.card?.persistentModelID == cardA.persistentModelID)
 
         let unreachedBefore = deck.historyEntries.filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
-        #expect(unreachedBefore.count == 10)
+        #expect(unreachedBefore.count == DeckScheduler.queueSize)
         let unreachedIDsBefore = Set(unreachedBefore.map(\.persistentModelID))
         #expect(unreachedBefore.contains { $0.card?.persistentModelID == cardB.persistentModelID }, "cardB must appear in the unreached queue for this test to be meaningful")
 
@@ -292,21 +260,21 @@ struct DeckSchedulerTests {
         #expect(deck.activeHistoryEntry?.persistentModelID == currentEntry.persistentModelID, "pointer unaffected")
 
         let unreachedAfter = deck.historyEntries.filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
-        #expect(unreachedAfter.count == 10, "exactly 10 freshly generated entries afterward")
+        #expect(unreachedAfter.count == DeckScheduler.queueSize, "the full queue is freshly generated afterward")
         #expect(Set(unreachedAfter.map(\.persistentModelID)).isDisjoint(with: unreachedIDsBefore), "every entry that was in the unreached queue before -- including the contaminated one -- is gone")
     }
 
     // MARK: - Pause / resume
 
-    @Test("pausing freezes the queue (no top-up, no Next); unpausing tops a short queue back up to 10")
+    @Test("pausing freezes the queue; unpausing restores the configured queue size")
     func pauseFreezesQueueUnpauseResumes() throws {
         let context = try makeInMemoryContext()
         let deck = makeDeck(ankiID: 1, in: context)
         for id in [1, 2, 3] as [Int64] { _ = makeCard(ankiID: id, deck: deck, in: context) }
         try context.save()
 
-        DeckScheduler.readSchedule(for: deck, in: context)
-        #expect(deck.historyEntries.count == 10)
+        DeckScheduler.ensureSchedule(for: deck, in: context)
+        #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1)
 
         deck.isPaused = true
 
@@ -319,12 +287,12 @@ struct DeckSchedulerTests {
         for entry in toDrop { context.delete(entry) }
         deck.historyEntries.removeAll { droppedIDs.contains($0.persistentModelID) }
         let shortCount = deck.historyEntries.count
-        #expect(shortCount == 7)
+        #expect(shortCount == DeckScheduler.queueSize - 2)
         let snapshotSorted = deck.historyEntries.sorted { $0.sequence < $1.sequence }
         let snapshotIDs: [PersistentIdentifier] = snapshotSorted.map(\.persistentModelID)
         let snapshotDates: [Date] = snapshotSorted.map(\.projectedAt)
 
-        DeckScheduler.readSchedule(for: deck, in: context) // would-be top-up: must no-op
+        DeckScheduler.ensureSchedule(for: deck, in: context) // would-be top-up: must no-op
         DeckScheduler.next(deck, in: context) // would-be Next: must no-op
 
         let afterPaused = deck.historyEntries.sorted { $0.sequence < $1.sequence }
@@ -333,12 +301,12 @@ struct DeckSchedulerTests {
         let afterPausedDates: [Date] = afterPaused.map(\.projectedAt)
         #expect(afterPausedIDs == snapshotIDs)
         #expect(afterPausedDates == snapshotDates)
-        #expect(deck.activeHistoryEntry == nil)
-        #expect(deck.highestReachedSequence == nil)
+        #expect(deck.activeHistoryEntry?.sequence == 1)
+        #expect(deck.highestReachedSequence == 1)
 
         deck.isPaused = false
-        DeckScheduler.readSchedule(for: deck, in: context)
-        #expect(deck.historyEntries.count == 10)
+        DeckScheduler.ensureSchedule(for: deck, in: context)
+        #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1)
     }
 
     @Test("changing order on a paused deck discards the unreached queue but doesn't regenerate until unpaused")
@@ -347,18 +315,18 @@ struct DeckSchedulerTests {
         let deck = makeDeck(ankiID: 1, order: .sequential, in: context)
         for id in [1, 2, 3] as [Int64] { _ = makeCard(ankiID: id, deck: deck, in: context) }
         try context.save()
-        DeckScheduler.readSchedule(for: deck, in: context)
-        #expect(deck.historyEntries.count == 10)
+        DeckScheduler.ensureSchedule(for: deck, in: context)
+        #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1)
 
         deck.isPaused = true
         deck.displayConfig?.order = .random
         DeckScheduler.handleOrderChange(for: deck, in: context)
 
-        #expect(deck.historyEntries.isEmpty, "unreached queue discarded even while paused")
+        #expect(deck.historyEntries.count == 1, "only the current row remains while paused")
 
         deck.isPaused = false
-        DeckScheduler.readSchedule(for: deck, in: context)
-        #expect(deck.historyEntries.count == 10, "tops back up to 10 once unpaused and read")
+        DeckScheduler.ensureSchedule(for: deck, in: context)
+        #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1, "keeps current plus the full future queue once unpaused")
     }
 
     @Test("re-importing a fixture that soft-deletes a paused deck's current card discards the queue but defers regeneration until unpaused")
@@ -366,18 +334,18 @@ struct DeckSchedulerTests {
         let context = try makeInMemoryContext()
         _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("modern_deck"), modelContext: context)
         let deck = try #require(try fetchAll(Deck.self, in: context).first)
-        #expect(deck.historyEntries.count == 10, "seeded on import")
+        #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1, "seeded with current plus future queue on import")
 
         deck.isPaused = true
         try context.save()
 
         _ = try ApkgImporter.importApkg(fileURL: Fixtures.url("modern_deck_removed"), modelContext: context)
 
-        #expect(deck.historyEntries.isEmpty, "unreached queue discarded even though the deck is paused")
+        #expect(deck.historyEntries.count == 1, "reached history remains even though the deck is paused")
 
         deck.isPaused = false
-        DeckScheduler.readSchedule(for: deck, in: context)
-        #expect(deck.historyEntries.count == 10, "tops back up to 10 once unpaused and read")
+        DeckScheduler.ensureSchedule(for: deck, in: context)
+        #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1, "keeps current plus the full future queue once unpaused")
     }
 
     @Test("pause with history -> soft-delete clears the pointer -> unpause -> read regenerates via the empty-queue rule even though highestReachedSequence is non-nil")
@@ -405,12 +373,12 @@ struct DeckSchedulerTests {
         #expect(unreachedWhilePaused.isEmpty, "regeneration deferred while paused")
 
         deck.isPaused = false
-        DeckScheduler.readSchedule(for: deck, in: context)
+        DeckScheduler.ensureSchedule(for: deck, in: context)
 
         let unreachedAfter = deck.historyEntries
             .filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
             .sorted { $0.sequence < $1.sequence }
-        #expect(unreachedAfter.count == 10, "the highestReachedSequence-is-non-nil-but-pointer-is-nil case must still use the empty-queue rule, not get stuck")
+        #expect(unreachedAfter.count == DeckScheduler.queueSize, "the highestReachedSequence-is-non-nil-but-pointer-is-nil case must still use the empty-queue rule, not get stuck")
         // Only cardB remains active; the empty-queue rule for .sequential
         // must chain onto it (the lowest-ankiCardID -- and only -- active
         // card).
@@ -431,7 +399,7 @@ struct DeckSchedulerTests {
         }
         #expect(deck.highestReachedSequence == 25)
         let unreached = deck.historyEntries.filter { $0.sequence > 25 }
-        #expect(unreached.count == 10, "a full unreached queue sits ahead of history")
+        #expect(unreached.count == DeckScheduler.queueSize, "a full unreached queue sits ahead of history")
         let unreachedIDs = Set(unreached.map(\.persistentModelID))
 
         let firstPage = DeckScheduler.historyPage(for: deck, offset: 0, limit: 10)
@@ -481,9 +449,9 @@ struct DeckSchedulerTests {
         for id in [1, 2] as [Int64] { _ = makeCard(ankiID: id, deck: deck, in: context) }
         try context.save()
 
-        DeckScheduler.readSchedule(for: deck, in: context)
+        DeckScheduler.ensureSchedule(for: deck, in: context)
         let beforeEdit = deck.historyEntries.sorted { $0.sequence < $1.sequence }
-        #expect(beforeEdit.count == 10)
+        #expect(beforeEdit.count == DeckScheduler.queueSize + 1)
         let projectedAtsBefore = Dictionary(uniqueKeysWithValues: beforeEdit.map { ($0.persistentModelID, $0.projectedAt) })
 
         deck.displayConfig?.updateIntervalMinutes(60)
@@ -494,8 +462,8 @@ struct DeckSchedulerTests {
         }
 
         DeckScheduler.next(deck, in: context)
-        let generated = try #require(deck.historyEntries.first { $0.sequence == 11 })
-        let referenceEntry = try #require(deck.historyEntries.first { $0.sequence == 10 })
+        let generated = try #require(deck.historyEntries.first { $0.sequence == DeckScheduler.queueSize + 2 })
+        let referenceEntry = try #require(deck.historyEntries.first { $0.sequence == DeckScheduler.queueSize + 1 })
         let expected = referenceEntry.projectedAt.addingTimeInterval(60 * 60)
         #expect(abs(generated.projectedAt.timeIntervalSince(expected)) < 0.001, "the next top-up-generated entry must use the new spacing")
     }

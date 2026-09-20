@@ -37,7 +37,9 @@ enum ApkgImporter {
         let collection = try parseCollection(from: package)
 
         do {
-            return try apply(collection, package: package, to: modelContext)
+            return try ScheduleFileLock.shared().withExclusiveLock {
+                try apply(collection, package: package, to: modelContext)
+            }
         } catch {
             modelContext.rollback()
             throw error
@@ -182,7 +184,7 @@ enum ApkgImporter {
         // (ADR 0002, consequences). Still inside this same import
         // transaction/save.
         for deck in newlyCreatedDecks {
-            DeckScheduler.readSchedule(for: deck, in: modelContext)
+            try DeckScheduler.ensureSchedule(for: deck, in: modelContext, now: Date())
         }
 
         // Soft-delete reconciliation, scoped to decks this import actually

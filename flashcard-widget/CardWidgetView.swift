@@ -15,17 +15,20 @@ struct CardWidgetContent: Equatable, Sendable {
     let primary: String
     let secondary: String?
     let tertiary: String?
+    let quaternary: String?
     let usesPrimaryPlaceholder: Bool
 
     static func resolve(
         primary: String?,
         secondary: String?,
-        tertiary: String?
+        tertiary: String?,
+        quaternary: String? = nil
     ) -> CardWidgetContent {
         CardWidgetContent(
             primary: primary ?? primaryPlaceholder,
             secondary: secondary,
             tertiary: tertiary,
+            quaternary: quaternary,
             usesPrimaryPlaceholder: primary == nil
         )
     }
@@ -44,12 +47,14 @@ struct CardWidgetView: View {
         primary: String?,
         secondary: String?,
         tertiary: String?,
+        quaternary: String? = nil,
         presentation: CardWidgetPresentation = .lockScreen
     ) {
         content = CardWidgetContent.resolve(
             primary: primary,
             secondary: secondary,
-            tertiary: tertiary
+            tertiary: tertiary,
+            quaternary: quaternary
         )
         self.presentation = presentation
     }
@@ -85,20 +90,39 @@ struct CardWidgetView: View {
                 .lineLimit(presentation == .lockScreen ? 1 : 2)
                 .minimumScaleFactor(0.75)
 
-            Spacer(minLength: presentation == .lockScreen ? 1 : 12)
+            if presentation == .inApp {
+                Spacer(minLength: 12)
+            }
 
             if let secondary = content.secondary {
                 Text(secondary)
                     .font(secondaryFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(presentation == .lockScreen ? 1 : 2)
+            } else if presentation == .lockScreen {
+                Text("—")
+                    .font(secondaryFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
-            if presentation == .inApp, let tertiary = content.tertiary {
+            if presentation == .lockScreen {
+                Text(content.tertiary ?? "—")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if let tertiary = content.tertiary {
                 Text(tertiary)
                     .font(.footnote)
                     .foregroundStyle(.tertiary)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if presentation == .inApp, let quaternary = content.quaternary {
+                Text(quaternary)
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .accessibilityElement(children: .combine)
@@ -125,6 +149,19 @@ struct CardWidgetView: View {
             CardWidgetView(primary: "猫", secondary: "cat", tertiary: nil)
             CardWidgetView(primary: "鳥", secondary: nil, tertiary: nil)
             CardWidgetView(primary: nil, secondary: "Unmapped note type", tertiary: nil)
+            CardWidgetView(
+                primary: "A very long primary value that scales before truncating",
+                secondary: "A very long secondary value that truncates at the trailing edge",
+                tertiary: "A very long tertiary value that truncates at the trailing edge"
+            )
+            CardWidgetView(primary: "Missing optional rows", secondary: nil, tertiary: nil)
+            CardWidgetView(
+                primary: "Unlimited in-app fields",
+                secondary: "Secondary",
+                tertiary: "Tertiary text\ncontinues over as many\nlines as it needs.",
+                quaternary: "Quaternary text\nalso remains complete\nin the app.",
+                presentation: .inApp
+            )
         }
         .padding()
     }
