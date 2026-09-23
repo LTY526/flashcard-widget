@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import flashcard_widget
 
@@ -127,5 +128,48 @@ struct TabbedDeckDetailAcceptanceTests {
         coordinator.expireTimer(deckID: 42)
         #expect(attempts == 2)
         #expect(!coordinator.hasPending(deckID: 42))
+    }
+
+    @Test("entering Schedule flushes pending work before reading a new saved snapshot")
+    func scheduleEntryReadsSavedWork() throws {
+        let schema = SharedModelContainer.schema
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        let seed = ModelContext(container)
+        let deck = Deck(ankiDeckID: 42, name: "Fresh schedule")
+        seed.insert(deck)
+        seed.insert(HistoryEntry(sequence: 1, projectedAt: Date(timeIntervalSince1970: 100), card: nil, deck: deck))
+        try seed.save()
+        let deckID = deck.persistentModelID
+        let previous = try ScheduleSnapshot.load(deckID: deckID, from: container)
+        #expect(previous.upcoming.map(\.sequence) == [1])
+
+        var rebuilds = 0
+        let coordinator = PendingNextCoordinator(rebuild: { _, _ in
+            let writer = ModelContext(container)
+            let savedDeck = try #require(writer.model(for: deckID) as? Deck)
+            writer.insert(HistoryEntry(sequence: 2, projectedAt: Date(timeIntervalSince1970: 200), card: nil, deck: savedDeck))
+            try writer.save()
+            rebuilds += 1
+        }, reload: {})
+        coordinator.schedule(deckID: 42, after: Date(timeIntervalSince1970: 150))
+
+        let entered = try DeckScheduleEntry.load(
+            deckID: deckID,
+            ankiDeckID: 42,
+            from: container,
+            coordinator: coordinator
+        )
+        #expect(entered.upcoming.map(\.sequence) == [1, 2])
+        #expect(rebuilds == 1)
+        #expect(!coordinator.hasPending(deckID: 42))
+    }
+
+    @Test("rendered control lists confine scheduling settings and mapping to Config")
+    func controlPlacement() {
+        #expect(DeckDetailControl.visible(in: .current) == [.currentCard, .next, .pause])
+        #expect(DeckDetailControl.visible(in: .schedule) == [.schedule])
+        #expect(DeckDetailControl.visible(in: .config) == [
+            .order, .interval, .sleepEnabled, .sleepStart, .wakeTime, .fieldMapping
+        ])
     }
 }
