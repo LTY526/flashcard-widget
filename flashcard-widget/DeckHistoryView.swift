@@ -118,6 +118,21 @@ enum ScheduleSnapshotError: Error {
     case deckUnavailable
 }
 
+/// This is the Schedule entry path: pending Next work must commit before the
+/// value snapshot is loaded from a fresh context.
+@MainActor
+enum DeckScheduleEntry {
+    static func load(
+        deckID: PersistentIdentifier,
+        ankiDeckID: Int64,
+        from container: ModelContainer,
+        coordinator: PendingNextCoordinator
+    ) throws -> ScheduleSnapshot {
+        try coordinator.flush(deckIDs: [ankiDeckID])
+        return try ScheduleSnapshot.load(deckID: deckID, from: container)
+    }
+}
+
 struct DeckHistoryView: View {
     enum Tab: String, CaseIterable { case upcoming = "Upcoming"; case past = "Past" }
 
@@ -128,9 +143,10 @@ struct DeckHistoryView: View {
     @State private var pastLimit = DeckScheduler.historyPageSize
     @State private var snapshot: ScheduleSnapshot?
 
-    init(deck: Deck, tab: Binding<Tab>, scheduleRevision: Int = 0) {
+    init(deck: Deck, tab: Binding<Tab>, initialSnapshot: ScheduleSnapshot? = nil, scheduleRevision: Int = 0) {
         self.deck = deck
         self._tab = tab
+        self._snapshot = State(initialValue: initialSnapshot)
         self.scheduleRevision = scheduleRevision
     }
 

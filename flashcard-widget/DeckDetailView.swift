@@ -18,7 +18,7 @@ struct DeckDetailView: View {
     let scheduleRevision: Int
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var scheduleEntryRevision = 0
+    @State private var scheduleSnapshot: ScheduleSnapshot?
     @State private var failedAction: (() -> Void)?
     @State private var showsActionError = false
 
@@ -37,6 +37,7 @@ struct DeckDetailView: View {
     }
 
     var body: some View {
+        let controls = DeckDetailControl.visible(in: route.mode)
         VStack(spacing: 0) {
             if dynamicTypeSize.isAccessibilitySize {
                 modePicker.pickerStyle(.menu)
@@ -44,17 +45,17 @@ struct DeckDetailView: View {
                 modePicker.pickerStyle(.segmented)
             }
 
-            switch route.mode {
-            case .current:
-                currentView
-            case .schedule:
+            if controls.contains(.schedule) {
                 DeckHistoryView(
                     deck: deck,
                     tab: $route.scheduleTab,
-                    scheduleRevision: scheduleRevision &+ scheduleEntryRevision
+                    initialSnapshot: scheduleSnapshot,
+                    scheduleRevision: scheduleRevision
                 )
-            case .config:
-                configView
+            } else if controls.contains(.currentCard) {
+                currentView(controls)
+            } else {
+                configView(controls)
             }
         }
         .navigationTitle(deck.name)
@@ -86,35 +87,53 @@ struct DeckDetailView: View {
 
     private func selectMode(_ mode: DeckDetailRoute.Mode) {
         guard mode != route.mode else { return }
-        if route.mode == .current || mode == .schedule {
-            do { try coordinator.flush(deckIDs: [deck.ankiDeckID]) }
-            catch { return }
+        do {
+            if mode == .schedule {
+                scheduleSnapshot = try DeckScheduleEntry.load(
+                    deckID: deck.persistentModelID,
+                    ankiDeckID: deck.ankiDeckID,
+                    from: modelContext.container,
+                    coordinator: coordinator
+                )
+            } else if route.mode == .current {
+                try coordinator.flush(deckIDs: [deck.ankiDeckID])
+            }
+        } catch {
+            return
         }
         route.select(mode)
-        if mode == .schedule { scheduleEntryRevision &+= 1 }
     }
 
-    private var currentView: some View {
+    private func currentView(_ controls: [DeckDetailControl]) -> some View {
         Form {
-            Section("Current Card") {
-                currentCardContent
-                Button {
-                    advance(at: Date())
-                } label: {
-                    Label("Next", systemImage: "arrow.right")
-                }
-                .disabled(deck.isPaused || deck.activeCards.isEmpty)
-            }
-            Section {
-                Toggle("Paused", isOn: Binding(
-                    get: { deck.isPaused },
-                    set: { newValue in
-                        guard newValue != deck.isPaused else { return }
-                        updatePause(newValue)
+            ForEach(controls) { control in
+                switch control {
+                case .currentCard:
+                    Section("Current Card") { currentCardContent }
+                case .next:
+                    Section {
+                        Button {
+                            advance(at: Date())
+                        } label: {
+                            Label("Next", systemImage: "arrow.right")
+                        }
+                        .disabled(deck.isPaused || deck.activeCards.isEmpty)
                     }
-                ))
-            } footer: {
-                Text("Pausing clears upcoming cards and updates the widget. Resuming starts a new schedule.")
+                case .pause:
+                    Section {
+                        Toggle("Paused", isOn: Binding(
+                            get: { deck.isPaused },
+                            set: { newValue in
+                                guard newValue != deck.isPaused else { return }
+                                updatePause(newValue)
+                            }
+                        ))
+                    } footer: {
+                        Text("Pausing clears upcoming cards and updates the widget. Resuming starts a new schedule.")
+                    }
+                default:
+                    EmptyView()
+                }
             }
         }
     }
@@ -159,16 +178,25 @@ struct DeckDetailView: View {
         }
     }
 
-    private var configView: some View {
+    private func configView(_ controls: [DeckDetailControl]) -> some View {
         Form {
             if let config = deck.displayConfig {
-                DisplayConfigSection(deck: deck, config: config, coordinator: coordinator)
+                DisplayConfigSection(
+                    deck: deck,
+                    config: config,
+                    coordinator: coordinator,
+                    controls: controls.filter(\.isConfigurationSetting)
+                )
             }
-            Section {
-                Button {
-                    editMapping(deck)
-                } label: {
-                    Label("Field Mapping", systemImage: "slider.horizontal.3")
+            ForEach(controls) { control in
+                if control == .fieldMapping {
+                    Section {
+                        Button {
+                            editMapping(deck)
+                        } label: {
+                            Label("Field Mapping", systemImage: "slider.horizontal.3")
+                        }
+                    }
                 }
             }
         }
@@ -201,41 +229,49 @@ private struct DisplayConfigSection: View {
     let deck: Deck
     @Bindable var config: DisplayConfig
     let coordinator: PendingNextCoordinator
+    let controls: [DeckDetailControl]
     @Environment(\.modelContext) private var modelContext
     @State private var failedEdit: (() throws -> Void)?
     @State private var showsSaveError = false
 
     var body: some View {
         Section {
-            Picker("Order", selection: Binding(
-                get: { config.order },
-                set: { newOrder in
-                    guard newOrder != config.order else { return }
-                    applyScheduleEdit {
-                        config.order = newOrder
+            ForEach(controls) { control in
+                switch control {
+                case .order:
+                    Picker("Order", selection: Binding(
+                        get: { config.order },
+                        set: { newOrder in
+                            guard newOrder != config.order else { return }
+                            applyScheduleEdit { config.order = newOrder }
+                        }
+                    )) {
+                        Text("Sequential").tag(DisplayOrder.sequential)
+                        Text("Random").tag(DisplayOrder.random)
                     }
+                case .interval:
+                    Stepper(value: Binding(
+                        get: { config.intervalMinutes },
+                        set: { candidate in
+                            guard candidate != config.intervalMinutes else { return }
+                            applyScheduleEdit { config.updateIntervalMinutes(candidate) }
+                        }
+                    ), in: DisplayConfig.minimumIntervalMinutes...1440, step: 5) {
+                        Text("Interval: \(config.intervalMinutes) min")
+                    }
+                case .sleepEnabled:
+                    Toggle("Sleep Schedule", isOn: Binding(
+                        get: { config.sleepEnabled },
+                        set: { enabled in updateSleep(enabled: enabled) }
+                    ))
+                case .sleepStart:
+                    DatePicker("Sleep starts", selection: minuteBinding(\.sleepStartMinute), displayedComponents: .hourAndMinute)
+                case .wakeTime:
+                    DatePicker("Wake time", selection: minuteBinding(\.sleepEndMinute), displayedComponents: .hourAndMinute)
+                default:
+                    EmptyView()
                 }
-            )) {
-                Text("Sequential").tag(DisplayOrder.sequential)
-                Text("Random").tag(DisplayOrder.random)
             }
-
-            Stepper(value: Binding(
-                get: { config.intervalMinutes },
-                set: { candidate in
-                    guard candidate != config.intervalMinutes else { return }
-                    applyScheduleEdit { config.updateIntervalMinutes(candidate) }
-                }
-            ), in: DisplayConfig.minimumIntervalMinutes...1440, step: 5) {
-                Text("Interval: \(config.intervalMinutes) min")
-            }
-
-            Toggle("Sleep Schedule", isOn: Binding(
-                get: { config.sleepEnabled },
-                set: { enabled in updateSleep(enabled: enabled) }
-            ))
-            DatePicker("Sleep starts", selection: minuteBinding(\.sleepStartMinute), displayedComponents: .hourAndMinute)
-            DatePicker("Wake time", selection: minuteBinding(\.sleepEndMinute), displayedComponents: .hourAndMinute)
         } header: {
             Text("Display Config")
         } footer: {
