@@ -124,12 +124,13 @@ struct DeckHistoryView: View {
     let deck: Deck
     let scheduleRevision: Int
     @Environment(\.modelContext) private var modelContext
-    @State private var tab: Tab = .upcoming
+    @Binding var tab: Tab
     @State private var pastLimit = DeckScheduler.historyPageSize
     @State private var snapshot: ScheduleSnapshot?
 
-    init(deck: Deck, scheduleRevision: Int = 0) {
+    init(deck: Deck, tab: Binding<Tab>, scheduleRevision: Int = 0) {
         self.deck = deck
+        self._tab = tab
         self.scheduleRevision = scheduleRevision
     }
 

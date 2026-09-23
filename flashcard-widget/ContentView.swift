@@ -65,13 +65,15 @@ struct ContentView: View {
     @State private var pendingNoteTypeIDsNeedingMapping: [PersistentIdentifier] = []
     @State private var deckPendingRemoval: Deck?
     @State private var scheduleRefreshState = ScheduleRefreshState()
+    @State private var route = DeckDetailRoute()
+    @State private var pendingNextCoordinator = PendingNextCoordinator()
 
     private var apkgContentType: UTType {
         UTType(importedAs: "net.ankiweb.apkg", conformingTo: .zip)
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $route.path) {
             Group {
                 if decks.isEmpty {
                     ContentUnavailableView(
@@ -82,9 +84,7 @@ struct ContentView: View {
                 } else {
                     List {
                         ForEach(decks) { deck in
-                            NavigationLink {
-                                DeckDetailView(deck: deck, scheduleRevision: scheduleRefreshState.revision)
-                            } label: {
+                            NavigationLink(value: deck.ankiDeckID) {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         HStack(spacing: 6) {
@@ -146,6 +146,19 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Decks")
+            .navigationDestination(for: Int64.self) { id in
+                if let deck = deckForNavigation(id) {
+                    DeckDetailView(
+                        deck: deck,
+                        route: $route,
+                        coordinator: pendingNextCoordinator,
+                        scheduleRevision: scheduleRefreshState.revision,
+                        editMapping: editMapping
+                    )
+                } else {
+                    ContentUnavailableView("Deck unavailable", systemImage: "rectangle.stack")
+                }
+            }
             .toolbar {
                 ToolbarItem {
                     if isImporting || isRemoving {
@@ -228,7 +241,31 @@ struct ContentView: View {
                 Text("This permanently deletes this deck's cards, and any notes or media not shared with another deck. You can re-import the .apkg file later if you change your mind.")
             }
             .sheet(item: $noteTypeNeedingMapping) { noteType in
-                FieldMappingView(noteType: noteType, onFinished: presentNextMappingPromptIfNeeded)
+                FieldMappingView(noteType: noteType, coordinator: pendingNextCoordinator, onFinished: presentNextMappingPromptIfNeeded)
+            }
+        }
+        .overlay {
+            if pendingNextCoordinator.errorMessage != nil {
+                VStack(spacing: 12) {
+                    Text(pendingNextCoordinator.errorMessage ?? "Schedule update failed")
+                    Button("Retry") {
+                        do { try pendingNextCoordinator.retry() }
+                        catch { /* pending anchor stays available */ }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding()
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        .onOpenURL { url in
+            route.requestDeepLink(DeckDeepLink.parse(url))
+            if !activationGate.blocksContent { resolveRequestedDeepLink() }
+        }
+        .onChange(of: route.path) { oldPath, newPath in
+            if oldPath.last != newPath.last {
+                route.mode = .current
+                route.scheduleTab = .upcoming
             }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -237,12 +274,14 @@ struct ContentView: View {
             Task { await reconcileOnActivation() }
         }
         .task {
+            pendingNextCoordinator.configure(context: modelContext)
             if scenePhase == .active { await reconcileOnActivation() }
         }
     }
 
     private func reconcileOnActivation() async {
         do {
+            try pendingNextCoordinator.retry()
             let lock = try ScheduleFileLock.shared()
             let changed = try await lock.withLock(mode: .exclusive) {
                 let container = try SharedModelContainer.makeShared()
@@ -257,10 +296,30 @@ struct ContentView: View {
             scheduleRefreshState.markRefreshed()
             if changed { await WidgetTimelineReloader.shared.scheduleReload() }
             activationGate.reconciliationSucceeded()
+            resolveRequestedDeepLink()
         } catch {
             activationGate.reconciliationFailed()
             importErrorMessage = "Couldn't update the schedule. Please try again."
         }
+    }
+
+    private func resolveRequestedDeepLink() {
+        guard let id = route.requestedDeepLinkID else { return }
+        do {
+            let context = ModelContext(modelContext.container)
+            var descriptor = FetchDescriptor<Deck>(predicate: #Predicate { $0.ankiDeckID == id })
+            descriptor.fetchLimit = 1
+            route.resolveRequestedDeepLink(exists: try !context.fetch(descriptor).isEmpty)
+        } catch {
+            importErrorMessage = "Couldn't open the deck. Please try again."
+        }
+    }
+
+    private func deckForNavigation(_ id: Int64) -> Deck? {
+        if let deck = decks.first(where: { $0.ankiDeckID == id }) { return deck }
+        var descriptor = FetchDescriptor<Deck>(predicate: #Predicate { $0.ankiDeckID == id })
+        descriptor.fetchLimit = 1
+        return try? modelContext.fetch(descriptor).first
     }
 
     private func handleFileImportResult(_ result: Result<[URL], Error>) {
@@ -279,6 +338,8 @@ struct ContentView: View {
     /// resolved back into the main context by `PersistentIdentifier` once
     /// the background context has saved.
     private func importDeck(from url: URL) {
+        do { try pendingNextCoordinator.retry() }
+        catch { return }
         isImporting = true
         let container = modelContext.container
         Task.detached(priority: .userInitiated) {
@@ -316,8 +377,11 @@ struct ContentView: View {
     /// `PersistentIdentifier` rather than crossing the main-context `Deck`
     /// object into a background task.
     private func removeDeck(_ deck: Deck) {
+        do { try pendingNextCoordinator.flush(deckIDs: [deck.ankiDeckID]) }
+        catch { return }
         isRemoving = true
         let deckID = deck.persistentModelID
+        let ankiDeckID = deck.ankiDeckID
         let container = modelContext.container
         Task.detached(priority: .userInitiated) {
             let backgroundContext = ModelContext(container)
@@ -327,7 +391,10 @@ struct ContentView: View {
             }
             do {
                 try DeckRemover.remove(backgroundDeck, from: backgroundContext)
-                await MainActor.run { isRemoving = false }
+                await MainActor.run {
+                    pendingNextCoordinator.cancelAfterDeletion(deckID: ankiDeckID)
+                    isRemoving = false
+                }
             } catch {
                 await MainActor.run {
                     isRemoving = false
@@ -352,9 +419,11 @@ struct ContentView: View {
     /// schedule read performs.
     private func togglePause(_ deck: Deck) {
         do {
-            try ScheduleFileLock.shared().withExclusiveLock {
-                try DeckScheduler.setPaused(!deck.isPaused, deck: deck, in: modelContext, now: Date())
-                try modelContext.save()
+            try pendingNextCoordinator.performMutation(affectedDeckIDs: [deck.ankiDeckID]) {
+                try ScheduleFileLock.shared().withExclusiveLock {
+                    try DeckScheduler.setPaused(!deck.isPaused, deck: deck, in: modelContext, now: Date())
+                    try modelContext.save()
+                }
             }
             Task { await WidgetTimelineReloader.shared.scheduleReload() }
         } catch {

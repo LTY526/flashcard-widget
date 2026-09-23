@@ -32,13 +32,15 @@ open. The xcuserdata subtree is machine/user-specific and is not architecture.
 | File | Role and usage |
 |---|---|
 | flashcard_widgetApp.swift | App entry point; creates the shared ModelContainer, displays store-opening errors, and routes widget deep links |
-| ContentView.swift | Deck list, APKG import/removal, pause actions, foreground reconciliation gate, mapping prompts, and schedule refresh revision |
-| DeckDetailView.swift | Current card, Next, pause/resume, interval/order/sleep settings, and Schedule navigation; owns the one-second Next rebuild debounce |
+| ContentView.swift | Deck list, APKG import/removal, pause actions, foreground reconciliation gate, mapping prompts, and deep-link navigation |
+| DeckDetailView.swift | Current, Schedule, and Config modes; current card, Next, pause/resume, and effective schedule settings |
 | DeckHistoryView.swift | Read-only Upcoming/Past Schedule UI; loads value snapshots through a fresh context so background commits appear without resetting navigation |
 | FieldMappingView.swift | Assigns Anki fields to display roles and provides live widget/in-app previews |
 | CardWidgetView.swift | Reusable card presentation for mapping previews and Deck Detail; supports compact three-row and expanded four-role forms |
 | WidgetTimelineReloader.swift | Actor that coalesces repeated WidgetKit reload requests |
 | Navigation/DeckDeepLink.swift | Strict parser for flashcard-widget://deck/<id> URLs |
+| Navigation/DeckDetailRoute.swift | Detail mode, Schedule subsection, and deferred deep-link route state |
+| Scheduling/PendingNextCoordinator.swift | Root-owned debounced Next anchors, flush, retry, and mutation gate |
 
 ### SwiftData models
 

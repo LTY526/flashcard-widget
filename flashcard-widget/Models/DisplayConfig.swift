@@ -6,8 +6,7 @@
 //  there is no "add another config" or "switch which one is in use"
 //  concept, so this is a one-to-one relationship, not a list the user
 //  manages. `order` and `intervalMinutes` have real scheduling effect via
-//  `DeckScheduler`; `newCardsADay` and `reviewPreviousDayCards` are stored
-//  and editable but not yet enforced by any scheduler this round.
+//  `DeckScheduler`; sleep settings affect projected dates.
 //
 
 import Foundation
@@ -24,8 +23,6 @@ final class DisplayConfig {
 
     var orderRawValue: String = DisplayOrder.sequential.rawValue
     var intervalMinutes: Int = DisplayConfig.defaultIntervalMinutes
-    var newCardsADay: Int = 0
-    var reviewPreviousDayCards: Bool = false
     var sleepEnabled: Bool = false
     var sleepStartMinute: Int = 1_320
     var sleepEndMinute: Int = 420
@@ -35,14 +32,10 @@ final class DisplayConfig {
 
     init(
         order: DisplayOrder = .sequential,
-        intervalMinutes: Int = DisplayConfig.defaultIntervalMinutes,
-        newCardsADay: Int = 0,
-        reviewPreviousDayCards: Bool = false
+        intervalMinutes: Int = DisplayConfig.defaultIntervalMinutes
     ) {
         self.orderRawValue = order.rawValue
         self.intervalMinutes = DisplayConfig.clampedIntervalMinutes(intervalMinutes)
-        self.newCardsADay = newCardsADay
-        self.reviewPreviousDayCards = reviewPreviousDayCards
     }
 
     var order: DisplayOrder {

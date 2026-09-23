@@ -143,9 +143,10 @@ function onNextTapped(now: Date): void {
 }
 ~~~
 
-Leaving Deck Detail, pausing or resuming, or editing schedule settings flushes
-a pending rebuild immediately. Another screen or the widget therefore cannot
-inherit the short-lived intermediate queue.
+Leaving Current, pausing or resuming, or editing schedule settings flushes a
+pending rebuild immediately. The root coordinator retains the deck ID and
+anchor until the locked rebuild and save succeed; a failure keeps Retry
+available after navigation and blocks dependent schedule changes.
 
 The non-UI next API remains synchronous for imports, tests, and other callers.
 Only rapid Deck Detail taps use the split and debounced path.
