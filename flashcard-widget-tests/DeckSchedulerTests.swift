@@ -430,16 +430,12 @@ struct DeckSchedulerTests {
         let config = try #require(deck.displayConfig)
         config.order = .random
         config.updateIntervalMinutes(45)
-        config.newCardsADay = 5
-        config.reviewPreviousDayCards = true
         try context.save()
 
         let deckID = deck.persistentModelID
         let reloaded = try #require(context.model(for: deckID) as? Deck)
         #expect(reloaded.displayConfig?.order == .random)
         #expect(reloaded.displayConfig?.intervalMinutes == 45)
-        #expect(reloaded.displayConfig?.newCardsADay == 5)
-        #expect(reloaded.displayConfig?.reviewPreviousDayCards == true)
     }
 
     @Test("editing intervalMinutes only affects entries generated after the edit, not already-queued ones")

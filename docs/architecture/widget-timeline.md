@@ -38,7 +38,7 @@ be refreshed before the full persistent queue is exhausted.
 
 The widget lays out primary, secondary, and tertiary values as three
 left-aligned rows. Quaternary content is app-only. Tapping the widget opens the
-deck detail through flashcard-widget://deck/<persistent-id>.
+deck detail through flashcard-widget://deck/<ankiDeckID>.
 
 ## Reload behavior
 

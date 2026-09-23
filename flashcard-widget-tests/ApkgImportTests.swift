@@ -242,8 +242,6 @@ struct ApkgImportTests {
             #expect(deck.displayConfig != nil)
             #expect(deck.displayConfig?.order == .sequential)
             #expect(deck.displayConfig?.intervalMinutes == 30)
-            #expect(deck.displayConfig?.newCardsADay == 0)
-            #expect(deck.displayConfig?.reviewPreviousDayCards == false)
 
             #expect(deck.historyEntries.count == DeckScheduler.queueSize + 1, "\(deck.name) must have one current and the full future queue")
         }

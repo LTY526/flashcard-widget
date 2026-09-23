@@ -22,11 +22,14 @@ import SwiftData
 
 struct FieldMappingView: View {
     let noteType: NoteType
+    let coordinator: PendingNextCoordinator
     var onFinished: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @State private var selections: [PersistentIdentifier: FieldRole?] = [:]
     @State private var sampleNote: Note?
+    @State private var saveError = false
 
     private var candidateNotes: [Note] {
         noteType.notes.filter { $0.isActive }
@@ -75,15 +78,19 @@ struct FieldMappingView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        applySelections()
-                        dismiss()
-                        onFinished()
+                        commitSelections()
                     }
                 }
             }
             .onAppear {
                 preloadSelections()
                 pickRandomSample()
+            }
+            .alert("Unable to Save Mapping", isPresented: $saveError) {
+                Button("Retry") { commitSelections() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The mapping could not be saved. Please try again.")
             }
         }
     }
@@ -154,9 +161,26 @@ struct FieldMappingView: View {
         }
     }
 
-    private func applySelections() {
-        for field in noteType.fields {
-            field.role = selections[field.persistentModelID] ?? nil
+    private func applySelections() throws {
+        try coordinator.retry()
+        try ScheduleFileLock.shared().withExclusiveLock {
+            for field in noteType.fields {
+                field.role = selections[field.persistentModelID] ?? nil
+            }
+            try modelContext.save()
+        }
+        Task { await WidgetTimelineReloader.shared.scheduleReload() }
+    }
+
+    private func commitSelections() {
+        do {
+            try applySelections()
+            saveError = false
+            dismiss()
+            onFinished()
+        } catch {
+            modelContext.rollback()
+            saveError = true
         }
     }
 

@@ -2,11 +2,9 @@
 //  DeckDetailView.swift
 //  flashcard-widget
 //
-//  Per-deck screen: current card (via that deck's own scheduled queue),
-//  Next, pause/resume, its one `DisplayConfig` editable in place, and
-//  a link to this deck's own paginated History screen (ADR 0002,
-//  decision 1). The active card uses the same reusable `CardWidgetView` as
-//  field-mapping previews.
+//  Per-deck Current, Schedule, and Config modes. Current uses the same
+//  reusable CardWidgetView as field-mapping previews. The root coordinator
+//  owns pending Next rebuilds across mode changes and navigation.
 //
 
 import SwiftUI
@@ -14,123 +12,193 @@ import SwiftData
 
 struct DeckDetailView: View {
     @Bindable var deck: Deck
+    @Binding var route: DeckDetailRoute
+    let coordinator: PendingNextCoordinator
+    var editMapping: (Deck) -> Void = { _ in }
     let scheduleRevision: Int
     @Environment(\.modelContext) private var modelContext
-    @State private var pendingRebuildTask: Task<Void, Never>?
-    @State private var pendingRebuildAnchor: Date?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var scheduleSnapshot: ScheduleSnapshot?
+    @State private var failedAction: (() -> Void)?
+    @State private var showsActionError = false
 
-    init(deck: Deck, scheduleRevision: Int = 0) {
+    init(
+        deck: Deck,
+        route: Binding<DeckDetailRoute>,
+        coordinator: PendingNextCoordinator,
+        scheduleRevision: Int = 0,
+        editMapping: @escaping (Deck) -> Void = { _ in }
+    ) {
         self.deck = deck
+        self._route = route
+        self.coordinator = coordinator
         self.scheduleRevision = scheduleRevision
+        self.editMapping = editMapping
     }
 
     var body: some View {
-        let _ = scheduleRevision
-        Form {
-            Section("Current Card") {
-                currentCardContent
-                Button {
-                    let now = Date()
-                    do {
-                        try ScheduleFileLock.shared().withExclusiveLock {
-                            try DeckScheduler.advanceImmediately(deck, in: modelContext, now: now)
-                            try modelContext.save()
-                        }
-                        scheduleFutureRebuild(after: now)
-                    } catch {
-                        // Keep the current card when advancing or saving fails.
-                        modelContext.rollback()
-                    }
-                } label: {
-                    Label("Next", systemImage: "arrow.right")
+        let controls = DeckDetailControl.visible(in: route.mode)
+        VStack(spacing: 0) {
+            if dynamicTypeSize.isAccessibilitySize {
+                modePicker.pickerStyle(.menu)
+            } else {
+                modePicker.pickerStyle(.segmented)
+            }
+
+            if controls.contains(.schedule) {
+                DeckHistoryView(
+                    deck: deck,
+                    tab: $route.scheduleTab,
+                    initialSnapshot: scheduleSnapshot,
+                    scheduleRevision: scheduleRevision
+                )
+            } else if controls.contains(.currentCard) {
+                currentView(controls)
+            } else {
+                configView(controls)
+            }
+        }
+        .navigationTitle(deck.name)
+        .onDisappear {
+            do { try coordinator.flush(deckIDs: [deck.ankiDeckID]) }
+            catch { /* root-owned coordinator displays Retry after a system pop */ }
+        }
+        .alert("Unable to Update Schedule", isPresented: $showsActionError) {
+            Button("Retry") { failedAction?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The schedule could not be saved. Please try again.")
+        }
+    }
+
+    private var modePicker: some View {
+        Picker("Deck detail mode", selection: Binding(
+                get: { route.mode },
+                set: { selectMode($0) }
+            )) {
+                ForEach(DeckDetailRoute.Mode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
                 }
-                .disabled(deck.isPaused || deck.activeCards.isEmpty)
             }
+            .accessibilityLabel("Deck detail mode")
+            .accessibilityValue(route.mode.rawValue)
+            .padding()
+    }
 
-            Section {
-                Toggle("Paused", isOn: Binding(
-                    get: { deck.isPaused },
-                    set: { newValue in
-                        guard newValue != deck.isPaused else { return }
-                        flushPendingFutureRebuild()
-                        do {
-                            try ScheduleFileLock.shared().withExclusiveLock {
-                                try DeckScheduler.setPaused(
-                                    newValue,
-                                    deck: deck,
-                                    in: modelContext,
-                                    now: Date()
-                                )
-                                try modelContext.save()
-                            }
-                            Task {
-                                await WidgetTimelineReloader.shared.scheduleReload()
-                            }
-                        } catch {
-                            // Keep the last saved pause state when updating fails.
-                            modelContext.rollback()
+    private func selectMode(_ mode: DeckDetailRoute.Mode) {
+        guard mode != route.mode else { return }
+        do {
+            if mode == .schedule {
+                scheduleSnapshot = try DeckScheduleEntry.load(
+                    deckID: deck.persistentModelID,
+                    ankiDeckID: deck.ankiDeckID,
+                    from: modelContext.container,
+                    coordinator: coordinator
+                )
+            } else if route.mode == .current {
+                try coordinator.flush(deckIDs: [deck.ankiDeckID])
+            }
+        } catch {
+            return
+        }
+        route.select(mode)
+    }
+
+    private func currentView(_ controls: [DeckDetailControl]) -> some View {
+        Form {
+            ForEach(controls) { control in
+                switch control {
+                case .currentCard:
+                    Section("Current Card") { currentCardContent }
+                case .next:
+                    Section {
+                        Button {
+                            advance(at: Date())
+                        } label: {
+                            Label("Next", systemImage: "arrow.right")
                         }
+                        .disabled(deck.isPaused || deck.activeCards.isEmpty)
                     }
-                ))
-            } footer: {
-                Text("Pausing clears upcoming cards and updates the widget. Resuming starts a new schedule.")
+                case .pause:
+                    Section {
+                        Toggle("Paused", isOn: Binding(
+                            get: { deck.isPaused },
+                            set: { newValue in
+                                guard newValue != deck.isPaused else { return }
+                                updatePause(newValue)
+                            }
+                        ))
+                    } footer: {
+                        Text("Pausing clears upcoming cards and updates the widget. Resuming starts a new schedule.")
+                    }
+                default:
+                    EmptyView()
+                }
             }
+        }
+    }
 
+    private func advance(at now: Date) {
+        do {
+            try coordinator.performNextMutation(deckID: deck.ankiDeckID) {
+                try ScheduleFileLock.shared().withExclusiveLock {
+                    try DeckScheduler.advanceImmediately(deck, in: modelContext, now: now)
+                    try modelContext.save()
+                }
+            }
+            coordinator.schedule(deckID: deck.ankiDeckID, after: now)
+            failedAction = nil
+            showsActionError = false
+        } catch {
+            modelContext.rollback()
+            if coordinator.errorMessage == nil {
+                failedAction = { advance(at: now) }
+                showsActionError = true
+            }
+        }
+    }
+
+    private func updatePause(_ newValue: Bool) {
+        do {
+            try coordinator.performMutation(affectedDeckIDs: [deck.ankiDeckID]) {
+                try ScheduleFileLock.shared().withExclusiveLock {
+                    try DeckScheduler.setPaused(newValue, deck: deck, in: modelContext, now: Date())
+                    try modelContext.save()
+                }
+            }
+            failedAction = nil
+            showsActionError = false
+            Task { await WidgetTimelineReloader.shared.scheduleReload() }
+        } catch {
+            modelContext.rollback()
+            if coordinator.errorMessage == nil {
+                failedAction = { updatePause(newValue) }
+                showsActionError = true
+            }
+        }
+    }
+
+    private func configView(_ controls: [DeckDetailControl]) -> some View {
+        Form {
             if let config = deck.displayConfig {
                 DisplayConfigSection(
                     deck: deck,
                     config: config,
-                    beforeScheduleMutation: flushPendingFutureRebuild
+                    coordinator: coordinator,
+                    controls: controls.filter(\.isConfigurationSetting)
                 )
             }
-
-            Section {
-                NavigationLink {
-                    DeckHistoryView(deck: deck, scheduleRevision: scheduleRevision)
-                } label: {
-                    Label("Schedule", systemImage: "calendar")
+            ForEach(controls) { control in
+                if control == .fieldMapping {
+                    Section {
+                        Button {
+                            editMapping(deck)
+                        } label: {
+                            Label("Field Mapping", systemImage: "slider.horizontal.3")
+                        }
+                    }
                 }
             }
-        }
-        .navigationTitle(deck.name)
-        .onAppear {
-            if deck.displayConfig == nil {
-                deck.displayConfig = DisplayConfig()
-            }
-        }
-        .onDisappear {
-            flushPendingFutureRebuild()
-        }
-    }
-
-    private func scheduleFutureRebuild(after anchor: Date) {
-        pendingRebuildTask?.cancel()
-        pendingRebuildAnchor = anchor
-        pendingRebuildTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
-            rebuildFutureQueue()
-        }
-    }
-
-    private func flushPendingFutureRebuild() {
-        guard pendingRebuildAnchor != nil else { return }
-        pendingRebuildTask?.cancel()
-        rebuildFutureQueue()
-    }
-
-    private func rebuildFutureQueue() {
-        guard let anchor = pendingRebuildAnchor else { return }
-        pendingRebuildAnchor = nil
-        pendingRebuildTask = nil
-        do {
-            try ScheduleFileLock.shared().withExclusiveLock {
-                try DeckScheduler.rebuildFuture(for: deck, in: modelContext, now: anchor)
-                try modelContext.save()
-            }
-            Task { await WidgetTimelineReloader.shared.scheduleReload() }
-        } catch {
-            modelContext.rollback()
         }
     }
 
@@ -146,12 +214,10 @@ struct DeckDetailView: View {
                     presentation: .inApp
                 )
             } else {
-                Text("This card is no longer available.")
-                    .foregroundStyle(.secondary)
+                Text("This card is no longer available.").foregroundStyle(.secondary)
             }
         } else {
-            Text("No card yet -- tap Next to begin.")
-                .foregroundStyle(.secondary)
+            Text("No card yet -- tap Next to begin.").foregroundStyle(.secondary)
         }
     }
 }
@@ -162,49 +228,62 @@ struct DeckDetailView: View {
 private struct DisplayConfigSection: View {
     let deck: Deck
     @Bindable var config: DisplayConfig
-    let beforeScheduleMutation: () -> Void
+    let coordinator: PendingNextCoordinator
+    let controls: [DeckDetailControl]
     @Environment(\.modelContext) private var modelContext
-    @State private var intervalText: String = ""
+    @State private var failedEdit: (() throws -> Void)?
+    @State private var showsSaveError = false
 
     var body: some View {
         Section {
-            Picker("Order", selection: Binding(
-                get: { config.order },
-                set: { newOrder in
-                    guard newOrder != config.order else { return }
-                    applyScheduleEdit {
-                        config.order = newOrder
+            ForEach(controls) { control in
+                switch control {
+                case .order:
+                    Picker("Order", selection: Binding(
+                        get: { config.order },
+                        set: { newOrder in
+                            guard newOrder != config.order else { return }
+                            applyScheduleEdit { config.order = newOrder }
+                        }
+                    )) {
+                        Text("Sequential").tag(DisplayOrder.sequential)
+                        Text("Random").tag(DisplayOrder.random)
                     }
+                case .interval:
+                    Stepper(value: Binding(
+                        get: { config.intervalMinutes },
+                        set: { candidate in
+                            guard candidate != config.intervalMinutes else { return }
+                            applyScheduleEdit { config.updateIntervalMinutes(candidate) }
+                        }
+                    ), in: DisplayConfig.minimumIntervalMinutes...1440, step: 5) {
+                        Text("Interval: \(config.intervalMinutes) min")
+                    }
+                case .sleepEnabled:
+                    Toggle("Sleep Schedule", isOn: Binding(
+                        get: { config.sleepEnabled },
+                        set: { enabled in updateSleep(enabled: enabled) }
+                    ))
+                case .sleepStart:
+                    DatePicker("Sleep starts", selection: minuteBinding(\.sleepStartMinute), displayedComponents: .hourAndMinute)
+                case .wakeTime:
+                    DatePicker("Wake time", selection: minuteBinding(\.sleepEndMinute), displayedComponents: .hourAndMinute)
+                default:
+                    EmptyView()
                 }
-            )) {
-                Text("Sequential").tag(DisplayOrder.sequential)
-                Text("Random").tag(DisplayOrder.random)
             }
-
-            Stepper(value: Binding(
-                get: { config.intervalMinutes },
-                set: { candidate in
-                    guard candidate != config.intervalMinutes else { return }
-                    applyScheduleEdit { config.updateIntervalMinutes(candidate) }
-                }
-            ), in: DisplayConfig.minimumIntervalMinutes...1440, step: 5) {
-                Text("Interval: \(config.intervalMinutes) min")
-            }
-
-            Stepper("New cards a day: \(config.newCardsADay)", value: $config.newCardsADay, in: 0...200)
-
-            Toggle("Review previous-day cards", isOn: $config.reviewPreviousDayCards)
-
-            Toggle("Sleep Schedule", isOn: Binding(
-                get: { config.sleepEnabled },
-                set: { enabled in updateSleep(enabled: enabled) }
-            ))
-            DatePicker("Sleep starts", selection: minuteBinding(\.sleepStartMinute), displayedComponents: .hourAndMinute)
-            DatePicker("Wake time", selection: minuteBinding(\.sleepEndMinute), displayedComponents: .hourAndMinute)
         } header: {
             Text("Display Config")
         } footer: {
             Text("Automatic progress stops during the sleep range. Start and wake times remain editable while disabled.")
+        }
+        .alert("Unable to Save Configuration", isPresented: $showsSaveError) {
+            Button("Retry") {
+                if let failedEdit { applyScheduleEdit(failedEdit) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The schedule setting could not be saved. Please try again.")
         }
     }
 
@@ -231,24 +310,29 @@ private struct DisplayConfigSection: View {
         }
     }
 
-    private func applyScheduleEdit(_ edit: () throws -> Void) {
-        beforeScheduleMutation()
+    private func applyScheduleEdit(_ edit: @escaping () throws -> Void) {
         do {
-            try ScheduleFileLock.shared().withExclusiveLock {
-                try edit()
-                try DeckScheduler.rebuildFuture(for: deck, in: modelContext, now: Date())
-                try modelContext.save()
+            try coordinator.performMutation(affectedDeckIDs: [deck.ankiDeckID]) {
+                try ScheduleFileLock.shared().withExclusiveLock {
+                    try edit()
+                    try DeckScheduler.rebuildFuture(for: deck, in: modelContext, now: Date())
+                    try modelContext.save()
+                }
             }
+            failedEdit = nil
+            showsSaveError = false
             Task { await WidgetTimelineReloader.shared.scheduleReload() }
         } catch {
             modelContext.rollback()
+            failedEdit = edit
+            showsSaveError = true
         }
     }
 }
 
 #Preview {
     NavigationStack {
-        DeckDetailView(deck: Deck(ankiDeckID: 1, name: "Preview Deck"))
+        DeckDetailView(deck: Deck(ankiDeckID: 1, name: "Preview Deck"), route: .constant(DeckDetailRoute()), coordinator: PendingNextCoordinator())
     }
     .modelContainer(for: Deck.self, inMemory: true)
 }

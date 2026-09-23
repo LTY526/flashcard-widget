@@ -26,17 +26,23 @@ deck detail from briefly showing the card that was current when the app closed.
 
 ## Deck Detail and Next
 
+Deck Detail has Current, Schedule, and Config modes. Current contains the card,
+Next, and pause control. Schedule keeps its Upcoming/Past selection while its
+value snapshot refreshes on entry. Config contains order, interval, sleep, and
+field mapping.
+
 Next updates the effective pointer immediately. Rebuilding 100 future entries
 can be noticeable, so repeated taps are collected for one second and produce a
-single rebuild/save/reload cycle. Navigation away and other mutations flush
-pending work to prevent an unsaved pointer from escaping.
+single rebuild/save/reload cycle. The root coordinator keeps pending anchors
+across navigation. A failed flush leaves the anchor available for Retry and
+blocks dependent schedule changes until it succeeds.
 
 Changing interval, order, sleep range, pause state, or mappings is a schedule
 mutation and must use the same serialization path.
 
-## Schedule screen
+## Schedule mode
 
-DeckHistoryView shows Upcoming and Past instead of a separate History feature.
+DeckHistoryView shows Upcoming and Past.
 It loads ScheduleSnapshot values through a fresh ModelContext. This sees changes
 saved by background operations without replacing the SwiftUI navigation model
 with objects from a different context.
@@ -46,12 +52,13 @@ with objects from a different context.
 The widget URL has this exact shape:
 
 ~~~text
-flashcard-widget://deck/<persistent-deck-id>
+flashcard-widget://deck/<anki-deck-id>
 ~~~
 
 DeckDeepLink validates the scheme, host, path shape, and identifier. The app
-then selects the matching deck and navigates to its detail screen. Invalid or
-deleted IDs are ignored safely.
+then selects the matching deck and navigates to Current. On cold launch it waits
+for activation to complete before resolving the saved deck. Invalid or deleted
+IDs return to the deck list.
 
 ## Presentation contract
 
