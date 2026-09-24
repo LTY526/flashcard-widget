@@ -109,7 +109,8 @@ struct ScalableScheduleHistoryAcceptanceTests {
     @Test("expansion persists across append and resets for a new session; horizon uses last future")
     func expansionAndHorizon() throws {
         let (container, deckID, _) = try fixture(pastCount: 21)
-        var session = ScheduleSessionState(snapshot: try ScheduleSnapshot.load(deckID: deckID, from: container))
+        var session = ScheduleSessionState(snapshot: try ScheduleSnapshot.load(deckID: deckID, from: container), revision: 0)
+        #expect(!session.needsReload(for: 0))
         session.toggle(20)
         #expect(session.expansion.contains(20))
         try session.loadMore(deckID: deckID, from: container)
@@ -132,11 +133,48 @@ struct ScalableScheduleHistoryAcceptanceTests {
         #expect(session.expansion.contains(20))
 
         // Refresh, activation, and re-entry all begin a freshly loaded session.
-        session.begin(try ScheduleSnapshot.load(deckID: deckID, from: container))
+        #expect(session.needsReload(for: 1))
+        try session.reloadIfNeeded(deckID: deckID, from: container, revision: 1)
         #expect(session.snapshot?.watermark == 23)
         #expect(session.snapshot?.past.count == 20)
         #expect(!session.expansion.contains(20))
         #expect(session.snapshot?.scheduleHorizon == nil)
+        #expect(!session.needsReload(for: 1))
+
+        session.toggle(22)
+        try session.refresh(deckID: deckID, from: container, revision: 1)
+        #expect(!session.expansion.contains(22))
+        #expect(session.snapshot?.past.count == 20)
+        let reentered = ScheduleSessionState(snapshot: try ScheduleSnapshot.load(deckID: deckID, from: container), revision: 1)
+        #expect(!reentered.needsReload(for: 1))
+        #expect(reentered.snapshot?.past.count == 20)
+    }
+
+    @Test("the saved entry revision is checked against activation before accepting an initial snapshot")
+    func staleInitialSnapshotNeedsActivationReload() throws {
+        let (container, deckID, _) = try fixture(pastCount: 1)
+        let entered = ScheduleEntrySnapshot(
+            snapshot: try ScheduleSnapshot.load(deckID: deckID, from: container), revision: 0)
+        let rebuiltChild = ScheduleSessionState(snapshot: entered.snapshot, revision: entered.revision)
+        #expect(rebuiltChild.needsReload(for: 1))
+        #expect(!rebuiltChild.needsReload(for: 0))
+    }
+
+    @Test("Past page instrumentation records completed bounded fetches")
+    func completedPastFetches() throws {
+        let (container, deckID, _) = try fixture(pastCount: 21)
+        var events: [ScheduleQueryTrace.Event] = []
+        ScheduleQueryTrace.observeFetch = { events.append($0) }
+        defer { ScheduleQueryTrace.observeFetch = nil }
+        var snapshot = try ScheduleSnapshot.load(deckID: deckID, from: container)
+        #expect(events.filter { if case .past = $0.kind { true } else { false } }.count == 1)
+        #expect(events.last?.kind == .past(watermark: 22, before: nil))
+        #expect(events.last?.fetchLimit == 21)
+        #expect(events.last?.returnedCount == 21)
+        try snapshot.loadMorePast(deckID: deckID, from: container)
+        #expect(events.last?.kind == .past(watermark: 22, before: 2))
+        #expect(events.last?.fetchLimit == 21)
+        #expect(events.last?.returnedCount == 1)
     }
 
     @Test(arguments: [0, 3_000])
