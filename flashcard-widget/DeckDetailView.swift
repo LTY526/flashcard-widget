@@ -18,7 +18,7 @@ struct DeckDetailView: View {
     let scheduleRevision: Int
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var scheduleSnapshot: ScheduleSnapshot?
+    @State private var scheduleSnapshot: ScheduleEntrySnapshot?
     @State private var failedAction: (() -> Void)?
     @State private var showsActionError = false
 
@@ -49,7 +49,8 @@ struct DeckDetailView: View {
                 DeckHistoryView(
                     deck: deck,
                     tab: $route.scheduleTab,
-                    initialSnapshot: scheduleSnapshot,
+                    initialSnapshot: scheduleSnapshot?.snapshot,
+                    initialRevision: scheduleSnapshot?.revision,
                     scheduleRevision: scheduleRevision
                 )
             } else if controls.contains(.currentCard) {
@@ -89,11 +90,12 @@ struct DeckDetailView: View {
         guard mode != route.mode else { return }
         do {
             if mode == .schedule {
-                scheduleSnapshot = try DeckScheduleEntry.load(
+                scheduleSnapshot = try ScheduleEntrySnapshot.load(
                     deckID: deck.persistentModelID,
                     ankiDeckID: deck.ankiDeckID,
                     from: modelContext.container,
-                    coordinator: coordinator
+                    coordinator: coordinator,
+                    revision: scheduleRevision
                 )
             } else if route.mode == .current {
                 try coordinator.flush(deckIDs: [deck.ankiDeckID])

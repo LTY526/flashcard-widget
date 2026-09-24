@@ -38,16 +38,16 @@ struct ScalableScheduleHistoryAcceptanceTests {
     @Test(arguments: [0, 1, 20, 21, 420])
     func boundedPagesAndStableSession(pastCount: Int) throws {
         let (container, deckID, _) = try fixture(pastCount: pastCount)
-        var pastQueries: [(ScheduleQueryTrace.Kind, Int)] = []
-        ScheduleQueryTrace.observe = { kind, limit in
-            if case .past = kind { pastQueries.append((kind, limit)) }
+        var pastQueries: [ScheduleQueryTrace.Event] = []
+        ScheduleQueryTrace.observeFetch = { event in
+            if case .past = event.kind { pastQueries.append(event) }
         }
-        defer { ScheduleQueryTrace.observe = nil }
+        defer { ScheduleQueryTrace.observeFetch = nil }
         var snapshot = try ScheduleSnapshot.load(deckID: deckID, from: container)
         #expect(pastQueries.count == (pastCount == 0 ? 0 : 1))
         if pastCount > 0 {
-            #expect(pastQueries[0].0 == .past(watermark: pastCount + 1, before: nil))
-            #expect(pastQueries[0].1 == 21)
+            #expect(pastQueries[0].kind == .past(watermark: pastCount + 1, before: nil))
+            #expect(pastQueries[0].fetchLimit == 21)
         }
         #expect(snapshot.past.count == min(20, pastCount))
         #expect(snapshot.past.map(\.sequence) == Array((1...max(1, pastCount)).reversed().prefix(min(20, pastCount))))
@@ -56,8 +56,8 @@ struct ScalableScheduleHistoryAcceptanceTests {
         if pastCount > 20 {
             try snapshot.loadMorePast(deckID: deckID, from: container)
             #expect(pastQueries.count == 2)
-            #expect(pastQueries[1].0 == .past(watermark: pastCount + 1, before: pastCount - 19))
-            #expect(pastQueries[1].1 == 21)
+            #expect(pastQueries[1].kind == .past(watermark: pastCount + 1, before: pastCount - 19))
+            #expect(pastQueries[1].fetchLimit == 21)
             #expect(snapshot.past.count == min(40, pastCount))
             #expect(Array(snapshot.past.prefix(20)) == firstPage)
             #expect(Set(snapshot.past.map(\.sequence)).count == snapshot.past.count)
@@ -153,11 +153,19 @@ struct ScalableScheduleHistoryAcceptanceTests {
     @Test("the saved entry revision is checked against activation before accepting an initial snapshot")
     func staleInitialSnapshotNeedsActivationReload() throws {
         let (container, deckID, _) = try fixture(pastCount: 1)
-        let entered = ScheduleEntrySnapshot(
-            snapshot: try ScheduleSnapshot.load(deckID: deckID, from: container), revision: 0)
-        let rebuiltChild = ScheduleSessionState(snapshot: entered.snapshot, revision: entered.revision)
+        let entered = try ScheduleEntrySnapshot.load(deckID: deckID, ankiDeckID: 99,
+            from: container, coordinator: PendingNextCoordinator(), revision: 0)
+        var rebuiltChild = ScheduleSessionState(snapshot: entered.snapshot, revision: entered.revision)
         #expect(rebuiltChild.needsReload(for: 1))
         #expect(!rebuiltChild.needsReload(for: 0))
+        var queries: [ScheduleQueryTrace.Event] = []
+        ScheduleQueryTrace.observeFetch = { queries.append($0) }
+        defer { ScheduleQueryTrace.observeFetch = nil }
+        try rebuiltChild.reloadIfNeeded(deckID: deckID, from: container, revision: 0)
+        #expect(queries.isEmpty, "an entry snapshot at the current revision is not fetched twice")
+        try rebuiltChild.reloadIfNeeded(deckID: deckID, from: container, revision: 1)
+        #expect(queries.contains { if case .past = $0.kind { true } else { false } })
+        #expect(rebuiltChild.revision == 1)
     }
 
     @Test("Past page instrumentation records completed bounded fetches")
@@ -217,21 +225,21 @@ struct ScalableScheduleHistoryAcceptanceTests {
         #expect(try ScheduleSnapshot.load(deckID: deck.persistentModelID, from: container).scheduleHorizon ==
             start.addingTimeInterval(TimeInterval(DeckScheduler.queueSize * 900)))
 
-        var queries: [(ScheduleQueryTrace.Kind, Int)] = []
-        ScheduleQueryTrace.observe = { queries.append(($0, $1)) }
-        defer { ScheduleQueryTrace.observe = nil }
+        var queries: [ScheduleQueryTrace.Event] = []
+        ScheduleQueryTrace.observeFetch = { queries.append($0) }
+        defer { ScheduleQueryTrace.observeFetch = nil }
 
         guard case .cards(let selected) = ScheduleSelector.select(deck: deck, now: start) else {
             Issue.record("Expected a valid widget selection")
             return
         }
         #expect(selected.map(\.sequence) == Array(currentSequence...(currentSequence + 4)))
-        #expect(queries.allSatisfy { $0.1 <= DeckScheduler.queueSize + 1 })
+        #expect(queries.allSatisfy { $0.fetchLimit <= DeckScheduler.queueSize + 1 })
         queries.removeAll()
 
         _ = try DeckScheduler.reconcileOnActivation(in: container, now: start.addingTimeInterval(900))
-        #expect(queries.contains { $0.0 == .unreached && $0.1 == 101 })
-        #expect(queries.allSatisfy { $0.1 <= 101 })
+        #expect(queries.contains { $0.kind == .unreached && $0.fetchLimit == 101 })
+        #expect(queries.allSatisfy { $0.fetchLimit <= 101 })
         queries.removeAll()
 
         let writer = ModelContext(container)
@@ -243,8 +251,8 @@ struct ScalableScheduleHistoryAcceptanceTests {
         #expect(rebuilt.count == DeckScheduler.queueSize)
         #expect(rebuilt.first?.sequence == currentSequence + 3)
         #expect(rebuilt.last?.sequence == currentSequence + 102)
-        #expect(queries.contains { $0.0 == .current(sequence: currentSequence + 2) && $0.1 == 1 })
-        #expect(queries.allSatisfy { $0.1 <= 101 })
+        #expect(queries.contains { $0.kind == .current(sequence: currentSequence + 2) && $0.fetchLimit == 1 })
+        #expect(queries.allSatisfy { $0.fetchLimit <= 101 })
         try writer.save()
         let verify = ModelContext(container)
         let persisted = try #require(verify.model(for: deck.persistentModelID) as? Deck)

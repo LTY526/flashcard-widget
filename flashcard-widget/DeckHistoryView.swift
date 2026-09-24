@@ -14,17 +14,51 @@ struct HistoryExpansionState {
 struct ScheduleSessionState {
     private(set) var snapshot: ScheduleSnapshot?
     private(set) var expansion = HistoryExpansionState()
+    private(set) var revision: Int?
 
-    init(snapshot: ScheduleSnapshot? = nil) { self.snapshot = snapshot }
+    init(snapshot: ScheduleSnapshot? = nil, revision: Int? = nil) {
+        self.snapshot = snapshot
+        self.revision = revision
+    }
 
-    mutating func begin(_ snapshot: ScheduleSnapshot) {
-        self = ScheduleSessionState(snapshot: snapshot)
+    func needsReload(for revision: Int) -> Bool {
+        snapshot == nil || self.revision != revision
+    }
+
+    mutating func begin(_ snapshot: ScheduleSnapshot, revision: Int) {
+        self = ScheduleSessionState(snapshot: snapshot, revision: revision)
+    }
+
+    mutating func reloadIfNeeded(deckID: PersistentIdentifier, from container: ModelContainer,
+                                 revision: Int) throws {
+        guard needsReload(for: revision) else { return }
+        try refresh(deckID: deckID, from: container, revision: revision)
+    }
+
+    mutating func refresh(deckID: PersistentIdentifier, from container: ModelContainer,
+                          revision: Int) throws {
+        let refreshed = try ScheduleSnapshot.load(deckID: deckID, from: container)
+        begin(refreshed, revision: revision)
     }
 
     mutating func toggle(_ sequence: Int) { expansion.toggle(sequence) }
 
     mutating func loadMore(deckID: PersistentIdentifier, from container: ModelContainer) throws {
         try snapshot?.loadMorePast(deckID: deckID, from: container)
+    }
+}
+
+struct ScheduleEntrySnapshot {
+    let snapshot: ScheduleSnapshot
+    let revision: Int
+
+    @MainActor
+    static func load(deckID: PersistentIdentifier, ankiDeckID: Int64,
+                     from container: ModelContainer, coordinator: PendingNextCoordinator,
+                     revision: Int) throws -> ScheduleEntrySnapshot {
+        let snapshot = try DeckScheduleEntry.load(deckID: deckID, ankiDeckID: ankiDeckID,
+                                                  from: container, coordinator: coordinator)
+        return ScheduleEntrySnapshot(snapshot: snapshot, revision: revision)
     }
 }
 
@@ -126,8 +160,8 @@ struct ScheduleSnapshot {
         var descriptor = FetchDescriptor<HistoryEntry>(predicate: predicate,
             sortBy: [SortDescriptor(\HistoryEntry.sequence, order: .reverse)])
         descriptor.fetchLimit = DeckScheduler.historyPageSize + 1
-        ScheduleQueryTrace.observe?(.past(watermark: watermark, before: before), DeckScheduler.historyPageSize + 1)
-        let entries = try context.fetch(descriptor)
+        let entries = try ScheduleQueryTrace.fetch(descriptor, in: context,
+                                                   kind: .past(watermark: watermark, before: before))
         return (Array(entries.prefix(DeckScheduler.historyPageSize)).map { Row(entry: $0, currentID: nil) },
                 entries.count > DeckScheduler.historyPageSize)
     }
@@ -160,13 +194,13 @@ struct DeckHistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Binding var tab: Tab
     @State private var session: ScheduleSessionState
-    @State private var loadedRevision: Int?
 
-    init(deck: Deck, tab: Binding<Tab>, initialSnapshot: ScheduleSnapshot? = nil, scheduleRevision: Int = 0) {
+    init(deck: Deck, tab: Binding<Tab>, initialSnapshot: ScheduleSnapshot? = nil,
+         initialRevision: Int? = nil, scheduleRevision: Int = 0) {
         self.deck = deck
         self._tab = tab
-        self._session = State(initialValue: ScheduleSessionState(snapshot: initialSnapshot))
-        self._loadedRevision = State(initialValue: initialSnapshot == nil ? nil : scheduleRevision)
+        self._session = State(initialValue: ScheduleSessionState(snapshot: initialSnapshot,
+                                                                  revision: initialRevision))
         self.scheduleRevision = scheduleRevision
     }
 
@@ -199,7 +233,7 @@ struct DeckHistoryView: View {
             Button("Refresh", systemImage: "arrow.clockwise") { reloadSnapshot() }
         }
         .task(id: scheduleRevision) {
-            if loadedRevision != scheduleRevision { reloadSnapshot() }
+            reloadIfNeeded()
         }
     }
 
@@ -211,22 +245,27 @@ struct DeckHistoryView: View {
         )
     }
 
+    private func reloadIfNeeded() {
+        do {
+            try session.reloadIfNeeded(deckID: deck.persistentModelID,
+                                       from: modelContext.container, revision: scheduleRevision)
+        } catch {
+            session.begin(ScheduleSnapshot.invalid, revision: scheduleRevision)
+        }
+    }
+
     private func reloadSnapshot() {
         do {
-            let refreshed = try ScheduleSnapshot.load(
-                deckID: deck.persistentModelID,
-                from: modelContext.container
-            )
-            session.begin(refreshed)
-            loadedRevision = scheduleRevision
+            try session.refresh(deckID: deck.persistentModelID,
+                                from: modelContext.container, revision: scheduleRevision)
         } catch {
-            session.begin(ScheduleSnapshot.invalid)
+            session.begin(ScheduleSnapshot.invalid, revision: scheduleRevision)
         }
     }
 
     private func loadMorePast() {
         do { try session.loadMore(deckID: deck.persistentModelID, from: modelContext.container) }
-        catch { session.begin(ScheduleSnapshot.invalid) }
+        catch { session.begin(ScheduleSnapshot.invalid, revision: scheduleRevision) }
     }
 
     @ViewBuilder

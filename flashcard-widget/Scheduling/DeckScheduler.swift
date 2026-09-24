@@ -22,7 +22,20 @@ enum ScheduleQueryTrace {
         case unreached
         case current(sequence: Int)
     }
-    static var observe: ((Kind, Int) -> Void)?
+    struct Event {
+        let kind: Kind
+        let fetchLimit: Int
+        let returnedCount: Int
+    }
+    static var observeFetch: ((Event) -> Void)?
+
+    static func fetch(_ descriptor: FetchDescriptor<HistoryEntry>,
+                      in context: ModelContext, kind: Kind) throws -> [HistoryEntry] {
+        let rows = try context.fetch(descriptor)
+        observeFetch?(Event(kind: kind, fetchLimit: descriptor.fetchLimit ?? .max,
+                            returnedCount: rows.count))
+        return rows
+    }
 }
 
 enum DeckScheduler {
@@ -410,8 +423,8 @@ enum DeckScheduler {
             $0.deck?.persistentModelID == deckID && $0.sequence == sequence
         })
         descriptor.fetchLimit = 1
-        ScheduleQueryTrace.observe?(.current(sequence: sequence), 1)
-        return try context.fetch(descriptor).first
+        return try ScheduleQueryTrace.fetch(descriptor, in: context,
+                                            kind: .current(sequence: sequence)).first
     }
 
     static func unreachedEntries(for deck: Deck, in context: ModelContext) throws -> [HistoryEntry] {
@@ -421,8 +434,7 @@ enum DeckScheduler {
             $0.deck?.persistentModelID == deckID && $0.sequence > highest
         }, sortBy: [SortDescriptor(\HistoryEntry.sequence)])
         descriptor.fetchLimit = queueSize + 1
-        ScheduleQueryTrace.observe?(.unreached, queueSize + 1)
-        return try context.fetch(descriptor)
+        return try ScheduleQueryTrace.fetch(descriptor, in: context, kind: .unreached)
     }
 
     /// Generates exactly one new queued entry, chained off "the reference
