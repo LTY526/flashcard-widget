@@ -127,7 +127,14 @@ struct ScalableScheduleHistoryAcceptanceTests {
         deck.activeHistoryEntry = next
         deck.highestReachedSequence = 23
         try writer.save()
+        var route = DeckDetailRoute()
+        route.open(99)
+        route.select(.schedule)
+        route.scheduleTab = .past
+        route.scheduleTab = .upcoming
+        route.scheduleTab = .past
         // A saved change and subsection selection leave the live session intact.
+        #expect(route.scheduleTab == .past)
         #expect(session.snapshot?.watermark == 22)
         #expect(session.snapshot?.past.count == 21)
         #expect(session.expansion.contains(20))
@@ -145,7 +152,9 @@ struct ScalableScheduleHistoryAcceptanceTests {
         try session.refresh(deckID: deckID, from: container, revision: 1)
         #expect(!session.expansion.contains(22))
         #expect(session.snapshot?.past.count == 20)
-        let reentered = ScheduleSessionState(snapshot: try ScheduleSnapshot.load(deckID: deckID, from: container), revision: 1)
+        let entry = try ScheduleEntrySnapshot.load(deckID: deckID, ankiDeckID: 99,
+            from: container, coordinator: PendingNextCoordinator(), revision: 1)
+        let reentered = ScheduleSessionState(snapshot: entry.snapshot, revision: entry.revision)
         #expect(!reentered.needsReload(for: 1))
         #expect(reentered.snapshot?.past.count == 20)
     }
