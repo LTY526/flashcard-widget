@@ -6,6 +6,8 @@ import Testing
 @MainActor
 @Suite("scalable schedule history", .serialized)
 struct ScalableScheduleHistoryAcceptanceTests {
+    private enum InjectedFetchError: Error { case unavailable }
+
     private func fixture(pastCount: Int) throws -> (ModelContainer, PersistentIdentifier, Date) {
         let schema = SharedModelContainer.schema
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
@@ -192,6 +194,34 @@ struct ScalableScheduleHistoryAcceptanceTests {
         #expect(events.last?.kind == .past(watermark: 22, before: 2))
         #expect(events.last?.fetchLimit == 21)
         #expect(events.last?.returnedCount == 1)
+    }
+
+    @Test("a failed queue fetch aborts pause and future rebuild before deletion")
+    func failedQueueFetchDoesNotMutate() throws {
+        let (container, deckID, start) = try fixture(pastCount: 1)
+        let context = ModelContext(container)
+        let deck = try #require(context.model(for: deckID) as? Deck)
+        deck.nextHistorySequence = 3
+        try DeckScheduler.ensureSchedule(for: deck, in: context, now: start)
+        try context.save()
+        let before = try DeckScheduler.validatedUnreachedEntries(for: deck, in: context).map(\.persistentModelID)
+        let originalSequence = deck.nextHistorySequence
+
+        ScheduleQueryTrace.failBeforeFetch = { kind in
+            if kind == .unreached { throw InjectedFetchError.unavailable }
+        }
+        defer { ScheduleQueryTrace.failBeforeFetch = nil }
+        #expect(throws: InjectedFetchError.self) {
+            try DeckScheduler.setPaused(true, deck: deck, in: context, now: start)
+        }
+        #expect(!deck.isPaused)
+        #expect(deck.nextHistorySequence == originalSequence)
+        #expect(throws: InjectedFetchError.self) {
+            try DeckScheduler.rebuildFuture(for: deck, in: context, now: start)
+        }
+        #expect(deck.nextHistorySequence == originalSequence)
+        ScheduleQueryTrace.failBeforeFetch = nil
+        #expect(try DeckScheduler.validatedUnreachedEntries(for: deck, in: context).map(\.persistentModelID) == before)
     }
 
     @Test(arguments: [0, 3_000])
