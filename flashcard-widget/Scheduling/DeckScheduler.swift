@@ -28,9 +28,13 @@ enum ScheduleQueryTrace {
         let returnedCount: Int
     }
     static var observeFetch: ((Event) -> Void)?
+    /// Test seam for a failed persistence read. The normal path still executes
+    /// ModelContext.fetch and records only completed fetches below.
+    static var failBeforeFetch: ((Kind) throws -> Void)?
 
     static func fetch(_ descriptor: FetchDescriptor<HistoryEntry>,
                       in context: ModelContext, kind: Kind) throws -> [HistoryEntry] {
+        try failBeforeFetch?(kind)
         let rows = try context.fetch(descriptor)
         observeFetch?(Event(kind: kind, fetchLimit: descriptor.fetchLimit ?? .max,
                             returnedCount: rows.count))
@@ -335,9 +339,9 @@ enum DeckScheduler {
 
     /// Config `order` change: discards the unreached queue (always), then
     /// regenerates it per the new `order` if the deck isn't paused.
-    static func handleOrderChange(for deck: Deck, in modelContext: ModelContext) {
-        discardUnreachedQueue(deck, in: modelContext)
-        try? topUp(deck, in: modelContext, now: Date())
+    static func handleOrderChange(for deck: Deck, in modelContext: ModelContext) throws {
+        try discardUnreachedQueue(deck, in: modelContext)
+        try topUp(deck, in: modelContext, now: Date())
     }
 
     /// Re-import soft-delete reconciliation for a deck that had one or
@@ -345,12 +349,12 @@ enum DeckScheduler {
     /// (always, regardless of pause), clears the pointer if its own
     /// entry's card was among those soft-deleted (without deleting that
     /// row), then regenerates if the deck isn't paused.
-    static func handleSoftDelete(for deck: Deck, in modelContext: ModelContext) {
-        discardUnreachedQueue(deck, in: modelContext)
+    static func handleSoftDelete(for deck: Deck, in modelContext: ModelContext) throws {
+        try discardUnreachedQueue(deck, in: modelContext)
         if let current = deck.activeHistoryEntry, let card = current.card, !card.isActive {
             deck.activeHistoryEntry = nil
         }
-        try? topUp(deck, in: modelContext, now: Date())
+        try topUp(deck, in: modelContext, now: Date())
     }
 
     /// Deletes every `HistoryEntry` with `sequence > highestReachedSequence`
@@ -370,8 +374,9 @@ enum DeckScheduler {
     /// between `highestReachedSequence` and the next real row -- which
     /// breaks "Next" (decision 4), whose `sequence == highestReachedSequence
     /// + 1` lookup depends on that contiguity.
-    static func discardUnreachedQueue(_ deck: Deck, in modelContext: ModelContext) {
-        let toDiscard = (try? unreachedEntries(for: deck, in: modelContext)) ?? []
+    static func discardUnreachedQueue(_ deck: Deck, in modelContext: ModelContext) throws {
+        let toDiscard = try unreachedEntries(for: deck, in: modelContext)
+        guard toDiscard.count <= queueSize else { throw ScheduleError.malformed }
         guard !toDiscard.isEmpty else { return }
         for entry in toDiscard {
             entry.deck = nil
@@ -547,7 +552,7 @@ enum DeckScheduler {
 
     static func setPaused(_ paused: Bool, deck: Deck, in modelContext: ModelContext, now: Date) throws {
         if paused {
-            discardUnreachedQueue(deck, in: modelContext)
+            try discardUnreachedQueue(deck, in: modelContext)
             deck.isPaused = true
         } else {
             deck.isPaused = false
@@ -580,11 +585,9 @@ enum DeckScheduler {
         timeZone: TimeZone = .autoupdatingCurrent
     ) throws {
         _ = try validatedIntervalSeconds(for: deck)
-        if let config = deck.displayConfig {
-            try config.validateSleep()
-            config.scheduleTimeZoneIdentifier = timeZone.identifier
-        }
-        discardUnreachedQueue(deck, in: modelContext)
+        try deck.displayConfig?.validateSleep()
+        try discardUnreachedQueue(deck, in: modelContext)
+        deck.displayConfig?.scheduleTimeZoneIdentifier = timeZone.identifier
         if !deck.isPaused, let current = deck.activeHistoryEntry {
             let first = try chainedEntry(
                 after: current,

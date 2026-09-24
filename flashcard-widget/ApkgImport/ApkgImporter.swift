@@ -225,7 +225,7 @@ enum ApkgImporter {
         // ADR 0002, decision 5.
         for deckID in decksWithNewSoftDeletes {
             guard let deck = modelContext.model(for: deckID) as? Deck else { continue }
-            DeckScheduler.handleSoftDelete(for: deck, in: modelContext)
+            try DeckScheduler.handleSoftDelete(for: deck, in: modelContext)
         }
 
         try modelContext.save()

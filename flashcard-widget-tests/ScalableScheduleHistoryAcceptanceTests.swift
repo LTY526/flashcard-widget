@@ -7,6 +7,24 @@ import Testing
 @Suite("scalable schedule history", .serialized)
 struct ScalableScheduleHistoryAcceptanceTests {
     private enum InjectedFetchError: Error { case unavailable }
+    private struct QueryShape: Equatable {
+        let kind: String
+        let limit: Int
+        let count: Int
+    }
+
+    private func shape(_ events: [ScheduleQueryTrace.Event], currentSequence: Int) -> [QueryShape] {
+        events.map { event in
+            let kind: String
+            switch event.kind {
+            case .unreached: kind = "unreached"
+            case .current(let sequence): kind = "current+\(sequence - currentSequence)"
+            case .past(let watermark, let before):
+                kind = "past+\(watermark - currentSequence):\(before.map { $0 - currentSequence } ?? -1)"
+            }
+            return QueryShape(kind: kind, limit: event.fetchLimit, count: event.returnedCount)
+        }
+    }
 
     private func fixture(pastCount: Int) throws -> (ModelContainer, PersistentIdentifier, Date) {
         let schema = SharedModelContainer.schema
@@ -219,13 +237,27 @@ struct ScalableScheduleHistoryAcceptanceTests {
         #expect(throws: InjectedFetchError.self) {
             try DeckScheduler.rebuildFuture(for: deck, in: context, now: start)
         }
+        #expect(throws: InjectedFetchError.self) {
+            try DeckScheduler.handleOrderChange(for: deck, in: context)
+        }
+        #expect(throws: InjectedFetchError.self) {
+            try DeckScheduler.handleSoftDelete(for: deck, in: context)
+        }
         #expect(deck.nextHistorySequence == originalSequence)
         ScheduleQueryTrace.failBeforeFetch = nil
         #expect(try DeckScheduler.validatedUnreachedEntries(for: deck, in: context).map(\.persistentModelID) == before)
     }
 
-    @Test(arguments: [0, 3_000])
-    func schedulerAndSelectorUseBoundedQueue(pastCount: Int) throws {
+    @Test("scheduler and Past query shapes stay bounded as history grows")
+    func schedulerAndSelectorUseBoundedQueue() throws {
+        let emptyHistory = try exerciseScheduler(pastCount: 0)
+        let mediumHistory = try exerciseScheduler(pastCount: 420)
+        let largeHistory = try exerciseScheduler(pastCount: 3_000)
+        #expect(Array(emptyHistory.prefix(4)) == Array(largeHistory.prefix(4)))
+        #expect(Array(mediumHistory.suffix(2)) == Array(largeHistory.suffix(2)))
+    }
+
+    private func exerciseScheduler(pastCount: Int) throws -> [[QueryShape]] {
         let schema = SharedModelContainer.schema
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         let context = ModelContext(container)
@@ -267,36 +299,79 @@ struct ScalableScheduleHistoryAcceptanceTests {
         var queries: [ScheduleQueryTrace.Event] = []
         ScheduleQueryTrace.observeFetch = { queries.append($0) }
         defer { ScheduleQueryTrace.observeFetch = nil }
+        var phases: [[QueryShape]] = []
 
         guard case .cards(let selected) = ScheduleSelector.select(deck: deck, now: start) else {
             Issue.record("Expected a valid widget selection")
-            return
+            return []
         }
         #expect(selected.map(\.sequence) == Array(currentSequence...(currentSequence + 4)))
-        #expect(queries.allSatisfy { $0.fetchLimit <= DeckScheduler.queueSize + 1 })
+        #expect(shape(queries, currentSequence: currentSequence) == [
+            QueryShape(kind: "unreached", limit: 101, count: 100)
+        ])
+        phases.append(shape(queries, currentSequence: currentSequence))
         queries.removeAll()
 
         _ = try DeckScheduler.reconcileOnActivation(in: container, now: start.addingTimeInterval(900))
-        #expect(queries.contains { $0.kind == .unreached && $0.fetchLimit == 101 })
-        #expect(queries.allSatisfy { $0.fetchLimit <= 101 })
+        #expect(shape(queries, currentSequence: currentSequence) == [
+            QueryShape(kind: "unreached", limit: 101, count: 100)
+        ])
+        phases.append(shape(queries, currentSequence: currentSequence))
         queries.removeAll()
 
         let writer = ModelContext(container)
         let savedDeck = try #require(writer.model(for: deck.persistentModelID) as? Deck)
         try DeckScheduler.advanceImmediately(savedDeck, in: writer, now: start.addingTimeInterval(901))
         #expect(savedDeck.highestReachedSequence == currentSequence + 2)
+        #expect(shape(queries, currentSequence: currentSequence) == [
+            QueryShape(kind: "unreached", limit: 101, count: 100),
+            QueryShape(kind: "current+2", limit: 1, count: 1)
+        ])
+        phases.append(shape(queries, currentSequence: currentSequence))
+        queries.removeAll()
         try DeckScheduler.rebuildFuture(for: savedDeck, in: writer, now: start.addingTimeInterval(901))
+        #expect(shape(queries, currentSequence: currentSequence) == [
+            QueryShape(kind: "unreached", limit: 101, count: 99),
+            QueryShape(kind: "unreached", limit: 101, count: 1)
+        ])
+        phases.append(shape(queries, currentSequence: currentSequence))
+        queries.removeAll()
         let rebuilt = try DeckScheduler.validatedUnreachedEntries(for: savedDeck, in: writer)
         #expect(rebuilt.count == DeckScheduler.queueSize)
         #expect(rebuilt.first?.sequence == currentSequence + 3)
         #expect(rebuilt.last?.sequence == currentSequence + 102)
-        #expect(queries.contains { $0.kind == .current(sequence: currentSequence + 2) && $0.fetchLimit == 1 })
-        #expect(queries.allSatisfy { $0.fetchLimit <= 101 })
+        #expect(shape(queries, currentSequence: currentSequence) == [
+            QueryShape(kind: "unreached", limit: 101, count: 100)
+        ])
+        queries.removeAll()
         try writer.save()
         let verify = ModelContext(container)
         let persisted = try #require(verify.model(for: deck.persistentModelID) as? Deck)
         #expect(try DeckScheduler.validatedUnreachedEntries(for: persisted, in: verify).count == 100)
-        #expect(try ScheduleSnapshot.load(deckID: deck.persistentModelID, from: container).past.first?.sequence == currentSequence + 1)
+        queries.removeAll()
+        var snapshot = try ScheduleSnapshot.load(deckID: deck.persistentModelID, from: container)
+        #expect(queries.count == 2)
+        #expect(shape(queries, currentSequence: currentSequence).first ==
+            QueryShape(kind: "unreached", limit: 101, count: 100))
+        #expect(queries.last?.kind == .past(watermark: currentSequence + 2, before: nil))
+        #expect(queries.last?.fetchLimit == 21)
+        #expect(queries.last?.returnedCount == min(21, pastCount + 2))
+        #expect(snapshot.past.first?.sequence == currentSequence + 1)
+        phases.append([QueryShape(kind: "first-past", limit: queries.last?.fetchLimit ?? .max,
+                                  count: queries.filter {
+                                      if case .past = $0.kind { true } else { false }
+                                  }.count)])
+        if pastCount > 20 {
+            queries.removeAll()
+            try snapshot.loadMorePast(deckID: deck.persistentModelID, from: container)
+            #expect(queries.count == 1)
+            #expect(queries[0].kind == .past(watermark: currentSequence + 2,
+                                             before: currentSequence - 18))
+            #expect(queries[0].fetchLimit == 21)
+            #expect(queries[0].returnedCount == 21)
+            phases.append([QueryShape(kind: "next-past", limit: queries[0].fetchLimit,
+                                      count: queries.count)])
+        }
         let oversized = HistoryEntry(sequence: currentSequence + 103,
             projectedAt: start.addingTimeInterval(100_000), card: persisted.activeHistoryEntry?.card, deck: persisted)
         verify.insert(oversized)
@@ -304,5 +379,10 @@ struct ScalableScheduleHistoryAcceptanceTests {
             try DeckScheduler.validatedUnreachedEntries(for: persisted, in: verify)
         }
         #expect(ScheduleSelector.select(deck: persisted, now: start) == .brokenSchedule)
+        #expect(throws: ScheduleError.malformed) {
+            try DeckScheduler.setPaused(true, deck: persisted, in: verify, now: start)
+        }
+        #expect(!persisted.isPaused)
+        return phases
     }
 }

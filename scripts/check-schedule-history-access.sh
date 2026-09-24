@@ -2,12 +2,17 @@
 set -eu
 
 cd "$(dirname "$0")/.."
+command -v rg >/dev/null 2>&1 || {
+    echo 'ripgrep is required to check Schedule history access.' >&2
+    exit 1
+}
 
-# A direct inverse-relationship read in app or widget code would fault the
-# complete deck history. Model declarations are excluded because they define
-# the relationship rather than read it.
-if rg -n '\.historyEntries\b' flashcard-widget FlashcardWidget \
-    --glob '*.swift' --glob '!**/Models/**'; then
-    echo 'Schedule paths must query HistoryEntry by sequence instead of reading deck.historyEntries.' >&2
+# Only the two SwiftData relationship declarations may name historyEntries in
+# production Swift. This catches direct, optional, bare, key-path, and
+# subscripted reads without relying on how a caller spells the deck variable.
+if rg -n '\bhistoryEntries\b' flashcard-widget FlashcardWidget --glob '*.swift' \
+    | rg -v '^flashcard-widget/Models/(Card|Deck)\.swift:[0-9]+:[[:space:]]*var historyEntries:' \
+    | rg -v '^flashcard-widget/Models/[^:]+\.swift:[0-9]+:[[:space:]]*//'; then
+    echo 'Production code must query HistoryEntry by sequence instead of reading historyEntries.' >&2
     exit 1
 fi

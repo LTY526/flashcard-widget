@@ -223,7 +223,7 @@ struct DeckSchedulerTests {
         #expect(unreachedIDsBefore.count == DeckScheduler.queueSize)
 
         deck.displayConfig?.order = .random
-        DeckScheduler.handleOrderChange(for: deck, in: context)
+        try DeckScheduler.handleOrderChange(for: deck, in: context)
 
         let afterChange = deck.historyEntries.sorted { $0.sequence < $1.sequence }
         let unreachedAfter = afterChange.filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
@@ -255,7 +255,7 @@ struct DeckSchedulerTests {
         #expect(unreachedBefore.contains { $0.card?.persistentModelID == cardB.persistentModelID }, "cardB must appear in the unreached queue for this test to be meaningful")
 
         cardB.removedAt = Date() // soft-deleted; referenced only by an unreached entry
-        DeckScheduler.handleSoftDelete(for: deck, in: context)
+        try DeckScheduler.handleSoftDelete(for: deck, in: context)
 
         #expect(deck.activeHistoryEntry?.persistentModelID == currentEntry.persistentModelID, "pointer unaffected")
 
@@ -320,7 +320,7 @@ struct DeckSchedulerTests {
 
         deck.isPaused = true
         deck.displayConfig?.order = .random
-        DeckScheduler.handleOrderChange(for: deck, in: context)
+        try DeckScheduler.handleOrderChange(for: deck, in: context)
 
         #expect(deck.historyEntries.count == 1, "only the current row remains while paused")
 
@@ -365,7 +365,7 @@ struct DeckSchedulerTests {
         // Simulate a re-import's reconciliation soft-deleting the pointer's
         // own card while the deck is paused.
         cardA.removedAt = Date()
-        DeckScheduler.handleSoftDelete(for: deck, in: context)
+        try DeckScheduler.handleSoftDelete(for: deck, in: context)
 
         #expect(deck.activeHistoryEntry == nil, "pointer cleared since its card was soft-deleted")
         #expect(deck.highestReachedSequence == 1, "highestReachedSequence must remain at its old, non-nil value")

@@ -30,6 +30,15 @@ same boundary. A later save becomes visible on Refresh or the next activation
 or re-entry. Each fetched row copies its date and mapped display text into the
 session; a later mapping edit appears when that row is fetched again.
 
+Schedule tests record completed `ModelContext.fetch` calls, their fetch limits,
+and returned row counts. The same selection, activation, immediate Next, and
+future rebuild paths produce identical query shapes with zero or 3,000 past
+rows. The app target also runs `scripts/check-schedule-history-access.sh` on
+every build; it rejects any production Swift read of the inverse
+`historyEntries` relationship. These checks cover the app's query and
+relationship access paths. SwiftData does not expose a public counter for
+internal relationship faults or individual SQL statements.
+
 ~~~ts
 type DeckSchedule = {
   current: HistoryEntry;
