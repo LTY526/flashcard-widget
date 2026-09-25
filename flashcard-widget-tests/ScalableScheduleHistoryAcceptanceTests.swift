@@ -179,6 +179,51 @@ struct ScalableScheduleHistoryAcceptanceTests {
         #expect(reentered.snapshot?.past.count == 20)
     }
 
+    @Test("Upcoming reveals the saved queue in 20-row pages without moving the session horizon")
+    func upcomingPagination() throws {
+        let (container, deckID, start) = try fixture(pastCount: 1)
+        let writer = ModelContext(container)
+        let deck = try #require(writer.model(for: deckID) as? Deck)
+        let card = try #require(deck.activeHistoryEntry?.card)
+        for sequence in 3...102 {
+            writer.insert(HistoryEntry(sequence: sequence,
+                projectedAt: start.addingTimeInterval(TimeInterval(sequence * 60)),
+                card: card, deck: deck))
+        }
+        try writer.save()
+
+        var session = ScheduleSessionState(snapshot: try ScheduleSnapshot.load(deckID: deckID, from: container), revision: 0)
+        let horizon = start.addingTimeInterval(102 * 60)
+        #expect(session.snapshot?.upcoming.count == 101)
+        #expect(session.visibleUpcoming.map(\.sequence) == Array(2...21))
+        #expect(session.hasMoreUpcoming)
+        #expect(session.snapshot?.scheduleHorizon == horizon)
+
+        var fetches: [ScheduleQueryTrace.Event] = []
+        ScheduleQueryTrace.observeFetch = { fetches.append($0) }
+        defer { ScheduleQueryTrace.observeFetch = nil }
+        session.loadMoreUpcoming()
+        #expect(session.visibleUpcoming.map(\.sequence) == Array(2...41))
+        #expect(fetches.isEmpty)
+        var route = DeckDetailRoute()
+        route.open(99)
+        route.select(.schedule)
+        route.scheduleTab = .past
+        route.scheduleTab = .upcoming
+        #expect(session.visibleUpcoming.count == 40)
+        for _ in 0..<4 { session.loadMoreUpcoming() }
+        #expect(session.visibleUpcoming.map(\.sequence) == Array(2...102))
+        #expect(!session.hasMoreUpcoming)
+        #expect(session.snapshot?.scheduleHorizon == horizon)
+        #expect(fetches.isEmpty)
+
+        ScheduleQueryTrace.observeFetch = nil
+        try session.refresh(deckID: deckID, from: container, revision: 0)
+        #expect(session.visibleUpcoming.map(\.sequence) == Array(2...21))
+        #expect(session.hasMoreUpcoming)
+        #expect(session.snapshot?.scheduleHorizon == horizon)
+    }
+
     @Test("the saved entry revision is checked against activation before accepting an initial snapshot")
     func staleInitialSnapshotNeedsActivationReload() throws {
         let (container, deckID, _) = try fixture(pastCount: 1)

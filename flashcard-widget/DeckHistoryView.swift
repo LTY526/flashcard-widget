@@ -15,6 +15,16 @@ struct ScheduleSessionState {
     private(set) var snapshot: ScheduleSnapshot?
     private(set) var expansion = HistoryExpansionState()
     private(set) var revision: Int?
+    private(set) var upcomingLimit = DeckScheduler.historyPageSize
+
+    var visibleUpcoming: [ScheduleSnapshot.Row] {
+        guard let snapshot else { return [] }
+        return Array(snapshot.upcoming.prefix(upcomingLimit))
+    }
+
+    var hasMoreUpcoming: Bool {
+        (snapshot?.upcoming.count ?? 0) > upcomingLimit
+    }
 
     init(snapshot: ScheduleSnapshot? = nil, revision: Int? = nil) {
         self.snapshot = snapshot
@@ -42,6 +52,11 @@ struct ScheduleSessionState {
     }
 
     mutating func toggle(_ sequence: Int) { expansion.toggle(sequence) }
+
+    mutating func loadMoreUpcoming() {
+        guard let count = snapshot?.upcoming.count, upcomingLimit < count else { return }
+        upcomingLimit = min(count, upcomingLimit + DeckScheduler.historyPageSize)
+    }
 
     mutating func loadMore(deckID: PersistentIdentifier, from container: ModelContainer) throws {
         try snapshot?.loadMorePast(deckID: deckID, from: container)
@@ -216,7 +231,7 @@ struct DeckHistoryView: View {
             if let snapshot, !snapshot.isValid {
                 unavailableView
             } else if let snapshot, tab == .upcoming {
-                scheduleList(snapshot.upcoming, currentBadge: true)
+                scheduleList(session.visibleUpcoming, currentBadge: true)
             } else if let snapshot {
                 List {
                     pastRows(snapshot.past)
@@ -298,6 +313,10 @@ struct DeckHistoryView: View {
         } else {
             List {
                 rows(entries, currentBadge: currentBadge)
+                if session.hasMoreUpcoming {
+                    Button("Load More") { session.loadMoreUpcoming() }
+                        .accessibilityLabel("Load more upcoming cards")
+                }
                 if let horizon = session.snapshot?.scheduleHorizon {
                     Text("Scheduled until \(horizon.formatted(date: .abbreviated, time: .shortened))")
                 } else {

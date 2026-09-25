@@ -48,8 +48,7 @@ enum DeckScheduler {
     /// reached).
     static let queueSize = 100
 
-    /// Past schedule rows remain intentionally paginated in small pages even
-    /// though the future queue is much larger.
+    /// Both Schedule subsections reveal rows in small, consistent pages.
     static let historyPageSize = 20
 
     /// Runs the complete foreground transaction in a disposable context.

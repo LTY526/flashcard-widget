@@ -6,9 +6,10 @@ Keep complete reached-card history, but stop materializing the entire history to
 display one page. Past rows use keyset pagination on the per-deck unique,
 immutable sequence: the screen captures its reconciled watermark as an upper
 bound, then fetches newest-first 20-row pages below the last returned sequence.
-Upcoming remains the current entry plus the persisted future queue. The Schedule
-UI shows the queue horizon and lets a past row expand to display all four mapped
-text roles as they exist when that page is fetched.
+Upcoming captures the current entry plus the persisted future queue, then shows
+20 rows at a time from that bounded session value. The Schedule UI shows the
+queue horizon even before the final row is visible and lets a past row expand to
+display all four mapped text roles as they exist when that page is fetched.
 
 ## Why
 
@@ -34,3 +35,5 @@ Successful foreground activation also begins a new session. Session resets
 replace paging and expansion state together while preserving Upcoming/Past
 selection; switching those subsections alone does not refresh. The performance
 contract covers complete scheduling transactions as well as their selectors.
+Upcoming Load More reveals more of the already captured queue without a database
+fetch or a new session.

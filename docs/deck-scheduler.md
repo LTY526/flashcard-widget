@@ -20,6 +20,9 @@ An active, unpaused deck keeps **100 unreached entries**. The widget still
 receives only the effective current card plus four future cards per timeline.
 Past rows remain stored indefinitely. Schedule fetches them 20 at a time with
 one look-ahead row, so each page query has a limit of 21.
+Upcoming captures the bounded current-plus-future queue once per session and
+shows 20 rows at a time. Its Load More action reveals captured rows without
+another database fetch; the horizon always uses the final future entry.
 
 Opening Schedule, using Refresh, and successful foreground activation each
 start a new snapshot session. The session keeps the reconciled sequence

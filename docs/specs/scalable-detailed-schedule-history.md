@@ -11,9 +11,9 @@ Build after `tabbed-deck-detail-and-simplified-config`; Schedule is one of its
 three modes. A session begins on entry/re-entry to Schedule, explicit Refresh,
 or successful foreground-activation reconciliation. These events reset the
 watermark, rows, cursor, and expanded-row state together, while preserving the
-selected Upcoming/Past subsection. Switching subsections and Load More do not
-start a new session. Current-card Next and configuration/pause edits happen
-outside Schedule; returning to Schedule observes their saved results. If an
+selected Upcoming/Past subsection. Switching subsections and Load More in either
+subsection do not start a new session. Current-card Next and configuration/pause
+edits happen outside Schedule; returning to Schedule observes their saved results. If an
 external save completes while Schedule remains visible, it does not silently
 replace that session; explicit Refresh or the next activation/re-entry does.
 
@@ -57,9 +57,12 @@ retain the existing app activation error/retry gate.
       and untruncated; activating it again collapses it.
 - [ ] Expansion state is screen-local, does not change progress, and remains
       stable while another page is appended.
-- [ ] Upcoming continues to show current plus the complete persisted future
-      queue. It displays `Scheduled until <localized date and time>` using the
-      last future entry, or a clear no-future-schedule message when appropriate.
+- [ ] Upcoming captures current plus the complete persisted future queue in the
+      session, then displays 20 rows at a time with Load More. Paging Upcoming
+      does not fetch or change the session. Its horizon uses the last future
+      entry even when that row is not yet visible, displaying `Scheduled until
+      <localized date and time>`, or a clear no-future-schedule message when
+      appropriate.
 - [ ] Opening and paging Past does not top up, reconcile, rebuild, save, or
       request a widget reload.
 - [ ] Instrumented tests assert each Past page executes one bounded query with
@@ -76,7 +79,7 @@ retain the existing app activation error/retry gate.
       by its pointer/sequence independently.
 - [ ] Tests cover empty history, 1, 20, 21, and several hundred reached entries;
       stable page boundaries; missing relationships; all four display roles;
-      expansion state; the schedule-horizon value; and session resets for
+      expansion state; Upcoming paging and its schedule-horizon value; and session resets for
       activation/Refresh/re-entry versus stability for subsection changes,
       external saves, and Load More.
 
