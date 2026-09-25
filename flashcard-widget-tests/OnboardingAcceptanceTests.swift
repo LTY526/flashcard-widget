@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import flashcard_widget
 
@@ -24,9 +25,46 @@ struct OnboardingAcceptanceTests {
                 #expect(model.stepIndex == index)
             }
             #expect(model.dismiss() == .dismiss)
+            #expect(model.finish() == .finish)
             model.restart()
             #expect(model.step == .importDeck)
         }
+    }
+
+    @MainActor
+    @Test("saved deck graph produces the exact advisory schedule checkmark")
+    func observedDeckGraph() throws {
+        let schema = SharedModelContainer.schema
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        let context = ModelContext(container)
+        let deck = Deck(ankiDeckID: 801, name: "Ready")
+        let noteType = NoteType(ankiNoteTypeID: 802, name: "Basic")
+        let field = NoteTypeField(name: "Front", ordinal: 0, role: .primary)
+        field.noteType = noteType
+        let note = Note(ankiNoteID: 803, fieldValues: ["Hello"], noteType: noteType)
+        let card = Card(ankiCardID: 804, ordinal: 0, note: note, deck: deck)
+        let entry = HistoryEntry(sequence: 1, projectedAt: .now, card: card, deck: deck)
+        deck.displayConfig = DisplayConfig()
+        deck.activeHistoryEntry = entry
+        deck.highestReachedSequence = 1
+        context.insert(deck)
+        context.insert(noteType)
+        context.insert(field)
+        context.insert(note)
+        context.insert(card)
+        context.insert(entry)
+        context.insert(deck.displayConfig!)
+        try context.save()
+
+        #expect(OnboardingObservedState(decks: [deck]).isComplete(.configureSchedule))
+        deck.highestReachedSequence = 2
+        #expect(!OnboardingObservedState(decks: [deck]).isComplete(.configureSchedule))
+        deck.highestReachedSequence = 1
+        deck.isPaused = true
+        #expect(!OnboardingObservedState(decks: [deck]).isComplete(.configureSchedule))
+        deck.isPaused = false
+        field.role = nil
+        #expect(!OnboardingObservedState(decks: [deck]).isComplete(.configureSchedule))
     }
 
     @Test("each step teaches the required action and destination")
@@ -53,7 +91,7 @@ struct OnboardingAcceptanceTests {
         #expect(!state.isComplete(.selectDeck))
         #expect(model.step == .selectDeck)
 
-        #expect(!OnboardingObservedState(decks: []).isComplete(.importDeck))
+        #expect(!OnboardingObservedState(decks: [] as [OnboardingDeckState]).isComplete(.importDeck))
         #expect(OnboardingObservedState(decks: [OnboardingDeckState()]).isComplete(.importDeck))
         #expect(!OnboardingObservedState(decks: [OnboardingDeckState(needsFieldMapping: true)]).isComplete(.mapFields))
         for change in [
