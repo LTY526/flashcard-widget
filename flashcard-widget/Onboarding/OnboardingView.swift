@@ -37,27 +37,32 @@ struct OnboardingView: View {
     }
 
     var body: some View {
+        let page = OnboardingPage(model: model, kind: kind, observedState: observedState)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("Step \(model.stepIndex + 1) of \(OnboardingStep.allCases.count)")
+                    Text(page.progress)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    Text(model.step.title)
+                    Text(page.title)
                         .font(.largeTitle.bold())
                         .accessibilityAddTraits(.isHeader)
 
-                    Text(model.step.instructions)
+                    Text(page.instructions)
                         .font(.body)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if model.stepIndex < 3 {
+                    Text("Where: \(page.destination)")
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let completionLabel = page.completionLabel {
                         Label(
-                            observedState.isComplete(model.step) ? "Complete" : "Not complete yet",
+                            completionLabel,
                             systemImage: observedState.isComplete(model.step) ? "checkmark.circle.fill" : "circle"
                         )
-                        .accessibilityLabel("\(model.step.title): \(observedState.isComplete(model.step) ? "complete" : "not complete yet")")
+                        .accessibilityLabel("\(page.title): \(completionLabel)")
                     }
 
                     Text("You can close this guide to use the app, then reopen Getting Started to check your progress.")
@@ -78,9 +83,9 @@ struct OnboardingView: View {
 
                     HStack {
                         Button("Back") { model.back() }
-                            .disabled(!model.canGoBack)
+                            .disabled(!page.canGoBack)
                         Spacer()
-                        Button(model.nextLabel) {
+                        Button(page.advanceLabel) {
                             if let intent = model.next() { onIntent(intent) }
                         }
                         .buttonStyle(.borderedProminent)
@@ -93,12 +98,12 @@ struct OnboardingView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    if kind == .manual {
+                    if page.showsRestart {
                         Button("Restart") { model.restart() }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Dismiss") { onIntent(model.dismiss()) }
+                    Button(page.dismissLabel) { onIntent(model.dismiss()) }
                 }
             }
         }

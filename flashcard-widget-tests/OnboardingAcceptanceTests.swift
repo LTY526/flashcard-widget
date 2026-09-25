@@ -107,25 +107,40 @@ struct OnboardingAcceptanceTests {
 
     @Test("manual replay cannot consume a pending automatic introduction")
     func automaticPresentationSurvivesManualReplay() {
+        let suite = "OnboardingReplayRace.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let persistence = OnboardingPersistence(defaults: defaults)
         var queue = OnboardingPresentationQueue()
-        queue.activationSucceeded(shouldPresentAutomatically: true)
+        queue.activationSucceeded(shouldPresentAutomatically: persistence.shouldPresentAutomatically)
         #expect(queue.pendingAutomatic)
-        #expect(queue.beginManual())
-        #expect(!queue.beginAutomaticIfReady(true))
+        let manualStarted = queue.beginManual()
+        #expect(manualStarted)
+        let automaticDuringManual = queue.beginAutomaticIfReady(true)
+        #expect(!automaticDuringManual)
         queue.activationSucceeded(shouldPresentAutomatically: true)
+        persistence.handle(.dismiss, presentation: .manual)
         queue.closed(.manual)
+        #expect(persistence.acknowledgedVersion == 0)
         #expect(queue.pendingAutomatic)
-        #expect(!queue.beginAutomaticIfReady(false))
-        #expect(queue.beginAutomaticIfReady(true))
+        let automaticWhileBlocked = queue.beginAutomaticIfReady(false)
+        #expect(!automaticWhileBlocked)
+        let automaticAfterManual = queue.beginAutomaticIfReady(true)
+        #expect(automaticAfterManual)
+        persistence.handle(.dismiss, presentation: .automatic)
         queue.closed(.automatic)
+        #expect(persistence.acknowledgedVersion == OnboardingPersistence.currentVersion)
         #expect(!queue.pendingAutomatic)
 
         var race = OnboardingPresentationQueue()
         race.activationSucceeded(shouldPresentAutomatically: true)
-        #expect(race.beginManual())
-        #expect(!race.beginAutomaticIfReady(true))
+        let raceManualStarted = race.beginManual()
+        #expect(raceManualStarted)
+        let raceAutomaticDuringManual = race.beginAutomaticIfReady(true)
+        #expect(!raceAutomaticDuringManual)
         race.closed(.manual)
-        #expect(race.beginAutomaticIfReady(true))
+        let raceAutomaticAfterManual = race.beginAutomaticIfReady(true)
+        #expect(raceAutomaticAfterManual)
     }
 
     @Test("checkmarks use independent observed deck predicates and never navigate")

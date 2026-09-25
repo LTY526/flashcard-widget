@@ -69,7 +69,8 @@ struct ContentView: View {
     @State private var pendingNextCoordinator = PendingNextCoordinator()
     @State private var onboardingSession: OnboardingSession?
     @State private var dismissedOnboardingKind: OnboardingPresentationKind?
-    @State private var pendingAutomaticOnboarding = false
+    @State private var onboardingIntentHandled = false
+    @State private var onboardingPresentationQueue = OnboardingPresentationQueue()
 
     private var apkgContentType: UTType {
         UTType(importedAs: "net.ankiweb.apkg", conformingTo: .zip)
@@ -263,10 +264,15 @@ struct ContentView: View {
             }
         }
         .sheet(item: $onboardingSession, onDismiss: {
+            guard let kind = dismissedOnboardingKind else { return }
             // A swipe changes the binding without invoking a button callback.
-            if let kind = dismissedOnboardingKind {
-                finishOnboarding(.dismiss, kind: kind)
+            if !onboardingIntentHandled {
+                OnboardingPersistence().handle(.dismiss, presentation: kind)
             }
+            onboardingPresentationQueue.closed(kind)
+            dismissedOnboardingKind = nil
+            onboardingIntentHandled = false
+            schedulePendingOnboardingPresentation()
         }) { session in
             OnboardingObservedDeckSource(session: session) { intent in
                 finishOnboarding(intent, kind: session.kind)
@@ -329,10 +335,10 @@ struct ContentView: View {
             if changed { await WidgetTimelineReloader.shared.scheduleReload() }
             activationGate.reconciliationSucceeded()
             resolveRequestedDeepLink()
-            if onboardingSession == nil && OnboardingPersistence().shouldPresentAutomatically {
-                pendingAutomaticOnboarding = true
-                schedulePendingOnboardingPresentation()
-            }
+            onboardingPresentationQueue.activationSucceeded(
+                shouldPresentAutomatically: OnboardingPersistence().shouldPresentAutomatically
+            )
+            schedulePendingOnboardingPresentation()
         } catch {
             activationGate.reconciliationFailed()
             importErrorMessage = "Couldn't update the schedule. Please try again."
@@ -478,30 +484,34 @@ struct ContentView: View {
     }
 
     private func presentManualOnboarding() {
-        guard !otherModalIsActive, onboardingSession == nil else { return }
+        guard !otherModalIsActive, onboardingSession == nil,
+              onboardingPresentationQueue.beginManual() else { return }
         // Manual replay never touches the version preference or library.
-        pendingAutomaticOnboarding = false
+        onboardingIntentHandled = false
         dismissedOnboardingKind = .manual
         onboardingSession = OnboardingSession(kind: .manual, initialStep: .importDeck)
     }
 
     private func schedulePendingOnboardingPresentation() {
-        guard pendingAutomaticOnboarding else { return }
+        guard onboardingPresentationQueue.pendingAutomatic else { return }
         // Let a picker, alert, or mapping sheet finish its dismissal animation.
         Task {
             try? await Task.sleep(nanoseconds: 400_000_000)
-            guard pendingAutomaticOnboarding, !otherModalIsActive,
-                  onboardingSession == nil else { return }
-            pendingAutomaticOnboarding = false
+            guard onboardingSession == nil,
+                  onboardingPresentationQueue.beginAutomaticIfReady(!otherModalIsActive)
+            else { return }
+            onboardingIntentHandled = false
             dismissedOnboardingKind = .automatic
             onboardingSession = OnboardingSession(kind: .automatic, initialStep: .importDeck)
         }
     }
 
     private func finishOnboarding(_ intent: OnboardingIntent, kind: OnboardingPresentationKind) {
+        guard !onboardingIntentHandled else { return }
         OnboardingPersistence().handle(intent, presentation: kind)
-        pendingAutomaticOnboarding = false
-        dismissedOnboardingKind = nil
+        onboardingIntentHandled = true
+        // Keep the queue occupied until the sheet's onDismiss callback. A
+        // second sheet must not appear during the closing animation.
         onboardingSession = nil
     }
 }

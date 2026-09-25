@@ -32,7 +32,7 @@ open. The xcuserdata subtree is machine/user-specific and is not architecture.
 | File | Role and usage |
 |---|---|
 | flashcard_widgetApp.swift | App entry point; creates the shared ModelContainer, displays store-opening errors, and routes widget deep links |
-| ContentView.swift | Deck list, APKG import/removal, pause actions, foreground reconciliation gate, mapping prompts, and deep-link navigation |
+| ContentView.swift | Deck list, APKG import/removal, pause actions, foreground reconciliation gate, mapping prompts, deep-link navigation, and automatic/manual onboarding sheet entry points |
 | DeckDetailView.swift | Current, Schedule, and Config modes; current card, Next, pause/resume, and effective schedule settings |
 | DeckHistoryView.swift | Read-only Upcoming/Past Schedule UI; entry helper flushes pending work and loads a fresh value snapshot without resetting subsection selection |
 | FieldMappingView.swift | Assigns Anki fields to display roles and provides live widget/in-app previews |
@@ -42,6 +42,12 @@ open. The xcuserdata subtree is machine/user-specific and is not architecture.
 | Navigation/DeckDetailControl.swift | Mode-specific control list consumed by the Deck Detail view |
 | Navigation/DeckDetailRoute.swift | Detail mode, Schedule subsection, and deferred deep-link route state |
 | Scheduling/PendingNextCoordinator.swift | Root-owned debounced Next anchors, flush, retry, and mutation gate |
+| Onboarding/OnboardingModel.swift | Pure ordered steps, instructional copy, navigation intents, and plain advisory completion predicates |
+| Onboarding/OnboardingPage.swift | Testable per-step presentation values and destinations rendered by the guide |
+| Onboarding/OnboardingPresentationQueue.swift | Retains a pending automatic guide through active modals and manual replay |
+| Onboarding/OnboardingPersistence.swift | Version acknowledgement preference and automatic/manual write rules |
+| Onboarding/OnboardingObservedState+Deck.swift | Converts live SwiftData decks and the current schedule pointer into plain observed values |
+| Onboarding/OnboardingView.swift | Scrollable accessible guide sheet, live deck query, navigation controls, and step previews |
 
 ### SwiftData models
 
@@ -122,6 +128,7 @@ one vendored library rather than edited individually.
 | SleepAwareScheduleAcceptanceTests.swift | Sleep/DST/timezone, activation atomicity, provider parity, Schedule snapshots, and four-role acceptance coverage |
 | ConfigurableWidgetAcceptanceTests.swift | Queue seed, provider selection, malformed schedules, resume, immediate Next/deferred rebuild, and deep-link grammar |
 | CardWidgetViewTests.swift | Role aggregation and plain card-content behavior |
+| OnboardingAcceptanceTests.swift | Step navigation and presentation, observed checkmarks, version persistence, and modal replay ordering |
 | DeckRemoverTests.swift | Cascade/shared-note/media deletion behavior |
 | Fixtures.swift | Test-only ModelContainer and graph construction helpers |
 | flashcard_widgetTests.swift | Template/smoke test target entry |
