@@ -67,9 +67,20 @@ struct ContentView: View {
     @State private var scheduleRefreshState = ScheduleRefreshState()
     @State private var route = DeckDetailRoute()
     @State private var pendingNextCoordinator = PendingNextCoordinator()
+    @State private var onboardingSession: OnboardingSession?
+    @State private var dismissedOnboardingKind: OnboardingPresentationKind?
+    @State private var onboardingIntentHandled = false
+    @State private var onboardingPresentationQueue = OnboardingPresentationQueue()
 
     private var apkgContentType: UTType {
         UTType(importedAs: "net.ankiweb.apkg", conformingTo: .zip)
+    }
+
+    private var otherModalIsActive: Bool {
+        isShowingFileImporter || noteTypeNeedingMapping != nil ||
+        importErrorMessage != nil || deckPendingRemoval != nil ||
+        isImporting || isRemoving || pendingNextCoordinator.errorMessage != nil ||
+        activationGate.blocksContent || !route.path.isEmpty
     }
 
     var body: some View {
@@ -160,6 +171,9 @@ struct ContentView: View {
                 }
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Getting Started") { presentManualOnboarding() }
+                }
                 ToolbarItem {
                     if isImporting || isRemoving {
                         ProgressView()
@@ -244,6 +258,21 @@ struct ContentView: View {
                 FieldMappingView(noteType: noteType, coordinator: pendingNextCoordinator, onFinished: presentNextMappingPromptIfNeeded)
             }
         }
+        .sheet(item: $onboardingSession, onDismiss: {
+            guard let kind = dismissedOnboardingKind else { return }
+            // A swipe changes the binding without invoking a button callback.
+            if !onboardingIntentHandled {
+                OnboardingPersistence().handle(.dismiss, presentation: kind)
+            }
+            onboardingPresentationQueue.closed(kind)
+            dismissedOnboardingKind = nil
+            onboardingIntentHandled = false
+            schedulePendingOnboardingPresentation()
+        }) { session in
+            OnboardingObservedDeckSource(session: session) { intent in
+                finishOnboarding(intent, kind: session.kind)
+            }
+        }
         .overlay {
             if pendingNextCoordinator.errorMessage != nil {
                 VStack(spacing: 12) {
@@ -267,6 +296,10 @@ struct ContentView: View {
                 route.mode = .current
                 route.scheduleTab = .upcoming
             }
+            if newPath.isEmpty { schedulePendingOnboardingPresentation() }
+        }
+        .onChange(of: otherModalIsActive) { _, isActive in
+            if !isActive { schedulePendingOnboardingPresentation() }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
@@ -297,6 +330,10 @@ struct ContentView: View {
             if changed { await WidgetTimelineReloader.shared.scheduleReload() }
             activationGate.reconciliationSucceeded()
             resolveRequestedDeepLink()
+            onboardingPresentationQueue.activationSucceeded(
+                shouldPresentAutomatically: OnboardingPersistence().shouldPresentAutomatically
+            )
+            schedulePendingOnboardingPresentation()
         } catch {
             activationGate.reconciliationFailed()
             importErrorMessage = "Couldn't update the schedule. Please try again."
@@ -439,6 +476,38 @@ struct ContentView: View {
         }
         let nextID = pendingNoteTypeIDsNeedingMapping.removeFirst()
         noteTypeNeedingMapping = modelContext.model(for: nextID) as? NoteType
+    }
+
+    private func presentManualOnboarding() {
+        guard !otherModalIsActive, onboardingSession == nil,
+              onboardingPresentationQueue.beginManual() else { return }
+        // Manual replay never touches the version preference or library.
+        onboardingIntentHandled = false
+        dismissedOnboardingKind = .manual
+        onboardingSession = OnboardingSession(kind: .manual, initialStep: .importDeck)
+    }
+
+    private func schedulePendingOnboardingPresentation() {
+        guard onboardingPresentationQueue.pendingAutomatic else { return }
+        // Let a picker, alert, or mapping sheet finish its dismissal animation.
+        Task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard onboardingSession == nil,
+                  onboardingPresentationQueue.beginAutomaticIfReady(!otherModalIsActive)
+            else { return }
+            onboardingIntentHandled = false
+            dismissedOnboardingKind = .automatic
+            onboardingSession = OnboardingSession(kind: .automatic, initialStep: .importDeck)
+        }
+    }
+
+    private func finishOnboarding(_ intent: OnboardingIntent, kind: OnboardingPresentationKind) {
+        guard !onboardingIntentHandled else { return }
+        OnboardingPersistence().handle(intent, presentation: kind)
+        onboardingIntentHandled = true
+        // Keep the queue occupied until the sheet's onDismiss callback. A
+        // second sheet must not appear during the closing animation.
+        onboardingSession = nil
     }
 }
 

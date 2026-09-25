@@ -10,8 +10,9 @@ in DeckScheduler; views coordinate user intent and present projected values.
 | Screen/type | Responsibility |
 |---|---|
 | flashcard_widgetApp | Creates the shared container and receives widget URLs |
-| ContentView | Deck list, imports, deletion, pause, mapping prompts, activation reconciliation |
+| ContentView | Deck list, imports, deletion, pause, mapping prompts, activation reconciliation, onboarding entry points and sheet scheduling |
 | DeckDetailView | Current card, Next, configuration, pause/resume, Schedule link |
+| OnboardingView | Five-step instructional guide with Back, Next/Finish, Dismiss, and manual Restart |
 | DeckHistoryView | Upcoming and Past schedule tabs from immutable snapshots |
 | FieldMappingView | Four-role field assignment and previews |
 | CardWidgetView | Shared compact/expanded card presentation |
@@ -59,6 +60,22 @@ DeckDeepLink validates the scheme, host, path shape, and identifier. The app
 then selects the matching deck and navigates to Current. On cold launch it waits
 for activation to complete before resolving the saved deck. Invalid or deleted
 IDs return to the deck list.
+
+## Getting Started
+
+After successful library activation, ContentView presents the five-step guide
+once for each new onboarding version. It waits for the file picker, mapping
+sheet, alerts, removal dialog, and other active work to close. An outstanding
+automatic introduction stays pending if the user starts a manual replay first;
+it appears after that sheet closes. The Getting Started toolbar action on the
+root deck page opens a manual replay, including when the library has no decks.
+
+The guide only explains where to use existing app and system controls. It does
+not import, configure, or schedule anything. The first three steps show
+advisory completion based on a live SwiftData query converted to plain observed
+values. Dismiss and Finish acknowledge the current version only for automatic
+presentation. A sheet swipe follows the same dismissal path. Manual Restart
+returns to step one without changing the saved acknowledgement.
 
 ## Presentation contract
 

@@ -1,0 +1,214 @@
+import Foundation
+import SwiftData
+import Testing
+@testable import flashcard_widget
+
+struct OnboardingAcceptanceTests {
+    @Test("stable steps navigate exactly within their boundaries")
+    func navigation() {
+        #expect(OnboardingStep.allCases.map(\.rawValue) == [
+            "importDeck", "mapFields", "configureSchedule", "addWidget", "selectDeck"
+        ])
+        for (index, step) in OnboardingStep.allCases.enumerated() {
+            var model = OnboardingModel(at: step)
+            #expect(model.stepIndex == index)
+            #expect(model.canGoBack == (index > 0))
+            #expect(model.nextLabel == (index == 4 ? "Finish" : "Next"))
+            model.back()
+            #expect(model.stepIndex == max(0, index - 1))
+            model = OnboardingModel(at: step)
+            if index < 4 {
+                #expect(model.next() == nil)
+                #expect(model.stepIndex == index + 1)
+            } else {
+                #expect(model.next() == .finish)
+                #expect(model.stepIndex == index)
+            }
+            #expect(model.dismiss() == .dismiss)
+            #expect(model.finish() == .finish)
+            model.restart()
+            #expect(model.step == .importDeck)
+        }
+    }
+
+    @MainActor
+    @Test("saved deck graph produces the exact advisory schedule checkmark")
+    func observedDeckGraph() throws {
+        let schema = SharedModelContainer.schema
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        let context = ModelContext(container)
+        let deck = Deck(ankiDeckID: 801, name: "Ready")
+        let noteType = NoteType(ankiNoteTypeID: 802, name: "Basic")
+        let field = NoteTypeField(name: "Front", ordinal: 0, role: .primary)
+        field.noteType = noteType
+        let note = Note(ankiNoteID: 803, fieldValues: ["Hello"], noteType: noteType)
+        let card = Card(ankiCardID: 804, ordinal: 0, note: note, deck: deck)
+        let entry = HistoryEntry(sequence: 1, projectedAt: .now, card: card, deck: deck)
+        deck.displayConfig = DisplayConfig()
+        deck.activeHistoryEntry = entry
+        deck.highestReachedSequence = 1
+        context.insert(deck)
+        context.insert(noteType)
+        context.insert(field)
+        context.insert(note)
+        context.insert(card)
+        context.insert(entry)
+        context.insert(deck.displayConfig!)
+        try context.save()
+
+        #expect(OnboardingObservedState(decks: [deck]).isComplete(.configureSchedule))
+        deck.highestReachedSequence = 2
+        #expect(!OnboardingObservedState(decks: [deck]).isComplete(.configureSchedule))
+        deck.highestReachedSequence = 1
+        deck.isPaused = true
+        #expect(!OnboardingObservedState(decks: [deck]).isComplete(.configureSchedule))
+        deck.isPaused = false
+        field.role = nil
+        #expect(!OnboardingObservedState(decks: [deck]).isComplete(.configureSchedule))
+    }
+
+    @Test("each step teaches the required action and destination")
+    func instructions() {
+        let instructions = OnboardingStep.allCases.map { $0.instructions.lowercased() }
+        for word in ["import", ".apkg", "files", "wait", "mapping"] { #expect(instructions[0].contains(word)) }
+        for word in ["primary", "secondary", "tertiary", "quaternary", "field mapping", "config", "note type", "share"] { #expect(instructions[1].contains(word)) }
+        for word in ["config", "interval", "sequential", "random", "sleep", "current", "pause", "resume"] { #expect(instructions[2].contains(word)) }
+        for word in ["lock screen", "editor", "rectangular", "save", "cannot"] { #expect(instructions[3].contains(word)) }
+        for word in ["lock screen", "configuration", "deck", "each widget", "quaternary", "app"] { #expect(instructions[4].contains(word)) }
+    }
+
+    @Test("presented pages bind every step to its destination and navigation controls")
+    func presentedPages() {
+        let destinations = [
+            "Decks → Import .apkg → Files",
+            "Deck → Config → Field Mapping",
+            "Deck → Config; Current for Pause/Resume",
+            "System Lock Screen editor → rectangular widget",
+            "System Lock Screen editor → widget configuration → Deck"
+        ]
+        let observed = OnboardingObservedState(decks: [] as [OnboardingDeckState])
+        for (index, step) in OnboardingStep.allCases.enumerated() {
+            let page = OnboardingPage(model: OnboardingModel(at: step),
+                                      kind: .manual, observedState: observed)
+            #expect(page.title == step.title)
+            #expect(page.instructions == step.instructions)
+            #expect(page.destination == destinations[index])
+            #expect(page.progress == "Step \(index + 1) of 5")
+            #expect(page.canGoBack == (index > 0))
+            #expect(page.advanceLabel == (index == 4 ? "Finish" : "Next"))
+            #expect(page.showsRestart)
+            #expect(page.dismissLabel == "Dismiss")
+            #expect(page.completionLabel == (index < 3 ? "Not complete yet" : nil))
+        }
+        let automatic = OnboardingPage(model: OnboardingModel(), kind: .automatic,
+                                       observedState: observed)
+        #expect(!automatic.showsRestart)
+    }
+
+    @Test("manual replay cannot consume a pending automatic introduction")
+    func automaticPresentationSurvivesManualReplay() {
+        let suite = "OnboardingReplayRace.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let persistence = OnboardingPersistence(defaults: defaults)
+        var queue = OnboardingPresentationQueue()
+        queue.activationSucceeded(shouldPresentAutomatically: persistence.shouldPresentAutomatically)
+        #expect(queue.pendingAutomatic)
+        let manualStarted = queue.beginManual()
+        #expect(manualStarted)
+        let automaticDuringManual = queue.beginAutomaticIfReady(true)
+        #expect(!automaticDuringManual)
+        queue.activationSucceeded(shouldPresentAutomatically: true)
+        persistence.handle(.dismiss, presentation: .manual)
+        queue.closed(.manual)
+        #expect(persistence.acknowledgedVersion == 0)
+        #expect(queue.pendingAutomatic)
+        let automaticWhileBlocked = queue.beginAutomaticIfReady(false)
+        #expect(!automaticWhileBlocked)
+        let automaticAfterManual = queue.beginAutomaticIfReady(true)
+        #expect(automaticAfterManual)
+        persistence.handle(.dismiss, presentation: .automatic)
+        queue.closed(.automatic)
+        #expect(persistence.acknowledgedVersion == OnboardingPersistence.currentVersion)
+        #expect(!queue.pendingAutomatic)
+
+        var race = OnboardingPresentationQueue()
+        race.activationSucceeded(shouldPresentAutomatically: true)
+        let raceManualStarted = race.beginManual()
+        #expect(raceManualStarted)
+        let raceAutomaticDuringManual = race.beginAutomaticIfReady(true)
+        #expect(!raceAutomaticDuringManual)
+        race.closed(.manual)
+        let raceAutomaticAfterManual = race.beginAutomaticIfReady(true)
+        #expect(raceAutomaticAfterManual)
+    }
+
+    @Test("checkmarks use independent observed deck predicates and never navigate")
+    func checkmarks() {
+        var model = OnboardingModel(at: .selectDeck)
+        let ready = OnboardingDeckState(needsFieldMapping: false, isPaused: false,
+            hasDisplayConfig: true, hasActivePointer: true, hasMatchingWatermark: true,
+            currentEntryOwnedByDeck: true, currentEntryRenderable: true, hasPrimaryText: true)
+        let state = OnboardingObservedState(decks: [ready])
+        #expect(state.isComplete(.importDeck))
+        #expect(state.isComplete(.mapFields))
+        #expect(state.isComplete(.configureSchedule))
+        #expect(!state.isComplete(.addWidget))
+        #expect(!state.isComplete(.selectDeck))
+        #expect(model.step == .selectDeck)
+
+        #expect(!OnboardingObservedState(decks: [] as [OnboardingDeckState]).isComplete(.importDeck))
+        #expect(OnboardingObservedState(decks: [OnboardingDeckState()]).isComplete(.importDeck))
+        #expect(!OnboardingObservedState(decks: [OnboardingDeckState(needsFieldMapping: true)]).isComplete(.mapFields))
+        for change in [
+            OnboardingDeckState(needsFieldMapping: true, isPaused: false, hasDisplayConfig: true, hasActivePointer: true, hasMatchingWatermark: true, currentEntryOwnedByDeck: true, currentEntryRenderable: true, hasPrimaryText: true),
+            OnboardingDeckState(needsFieldMapping: false, isPaused: true, hasDisplayConfig: true, hasActivePointer: true, hasMatchingWatermark: true, currentEntryOwnedByDeck: true, currentEntryRenderable: true, hasPrimaryText: true),
+            OnboardingDeckState(needsFieldMapping: false, isPaused: false, hasDisplayConfig: false, hasActivePointer: true, hasMatchingWatermark: true, currentEntryOwnedByDeck: true, currentEntryRenderable: true, hasPrimaryText: true),
+            OnboardingDeckState(needsFieldMapping: false, isPaused: false, hasDisplayConfig: true, hasActivePointer: false, hasMatchingWatermark: true, currentEntryOwnedByDeck: true, currentEntryRenderable: true, hasPrimaryText: true),
+            OnboardingDeckState(needsFieldMapping: false, isPaused: false, hasDisplayConfig: true, hasActivePointer: true, hasMatchingWatermark: false, currentEntryOwnedByDeck: true, currentEntryRenderable: true, hasPrimaryText: true),
+            OnboardingDeckState(needsFieldMapping: false, isPaused: false, hasDisplayConfig: true, hasActivePointer: true, hasMatchingWatermark: true, currentEntryOwnedByDeck: false, currentEntryRenderable: true, hasPrimaryText: true),
+            OnboardingDeckState(needsFieldMapping: false, isPaused: false, hasDisplayConfig: true, hasActivePointer: true, hasMatchingWatermark: true, currentEntryOwnedByDeck: true, currentEntryRenderable: false, hasPrimaryText: true),
+            OnboardingDeckState(needsFieldMapping: false, isPaused: false, hasDisplayConfig: true, hasActivePointer: true, hasMatchingWatermark: true, currentEntryOwnedByDeck: true, currentEntryRenderable: true, hasPrimaryText: false)
+        ] {
+            #expect(!OnboardingObservedState(decks: [change]).isComplete(.configureSchedule))
+        }
+        model.restart()
+        #expect(model.step == .importDeck)
+        #expect(state.isComplete(.importDeck))
+    }
+
+    @Test("automatic acknowledgement is versioned and manual replay never writes")
+    func persistence() {
+        let suite = "OnboardingAcceptanceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let v = OnboardingPersistence.currentVersion
+        #expect(v > 0)
+        let persistence = OnboardingPersistence(defaults: defaults, version: v)
+        #expect(persistence.acknowledgedVersion == 0)
+        #expect(persistence.shouldPresentAutomatically)
+        persistence.handle(.dismiss, presentation: .automatic)
+        #expect(persistence.acknowledgedVersion == v)
+        #expect(!persistence.shouldPresentAutomatically)
+        persistence.handle(.finish, presentation: .manual)
+        #expect(persistence.acknowledgedVersion == v)
+        var replay = OnboardingModel(at: .configureSchedule)
+        replay.restart()
+        #expect(persistence.acknowledgedVersion == v)
+
+        defaults.set(v - 1, forKey: OnboardingPersistence.key)
+        #expect(persistence.shouldPresentAutomatically)
+        persistence.handle(.finish, presentation: .automatic)
+        #expect(persistence.acknowledgedVersion == v)
+        let raised = OnboardingPersistence(defaults: defaults, version: v + 1)
+        #expect(raised.shouldPresentAutomatically)
+        raised.handle(.dismiss, presentation: .automatic)
+        #expect(raised.acknowledgedVersion == v + 1)
+        #expect(!raised.shouldPresentAutomatically)
+        persistence.handle(.finish, presentation: .automatic)
+        #expect(persistence.acknowledgedVersion == v + 1)
+        #expect(!persistence.shouldPresentAutomatically)
+        persistence.handle(.dismiss, presentation: .manual)
+        #expect(persistence.acknowledgedVersion == v + 1)
+    }
+}
