@@ -16,15 +16,40 @@
 import Foundation
 import SwiftData
 
+enum ScheduleQueryTrace {
+    enum Kind: Equatable {
+        case past(watermark: Int, before: Int?)
+        case unreached
+        case current(sequence: Int)
+    }
+    struct Event {
+        let kind: Kind
+        let fetchLimit: Int
+        let returnedCount: Int
+    }
+    static var observeFetch: ((Event) -> Void)?
+    /// Test seam for a failed persistence read. The normal path still executes
+    /// ModelContext.fetch and records only completed fetches below.
+    static var failBeforeFetch: ((Kind) throws -> Void)?
+
+    static func fetch(_ descriptor: FetchDescriptor<HistoryEntry>,
+                      in context: ModelContext, kind: Kind) throws -> [HistoryEntry] {
+        try failBeforeFetch?(kind)
+        let rows = try context.fetch(descriptor)
+        observeFetch?(Event(kind: kind, fetchLimit: descriptor.fetchLimit ?? .max,
+                            returnedCount: rows.count))
+        return rows
+    }
+}
+
 enum DeckScheduler {
     /// A non-paused deck with at least one active card always has at
     /// least this many `HistoryEntry` rows queued (generated but not yet
     /// reached).
     static let queueSize = 100
 
-    /// Past schedule rows remain intentionally paginated in small pages even
-    /// though the future queue is much larger.
-    static let historyPageSize = 10
+    /// Both Schedule subsections reveal rows in small, consistent pages.
+    static let historyPageSize = 20
 
     /// Runs the complete foreground transaction in a disposable context.
     /// Callers acquire the cross-process exclusive lock before invoking this.
@@ -39,7 +64,7 @@ enum DeckScheduler {
         let context = ModelContext(container)
         do {
             let decks = try context.fetch(FetchDescriptor<Deck>()).filter { !$0.isPaused }
-            let plans = try planReconciliation(for: decks, now: now, timeZone: timeZone)
+            let plans = try planReconciliation(for: decks, in: context, now: now, timeZone: timeZone)
             let changed = plans.contains(where: \.changesProgress)
             apply(plans, in: context)
             if changed { try save(context) }
@@ -81,7 +106,14 @@ enum DeckScheduler {
         now: Date,
         timeZone: TimeZone = .autoupdatingCurrent
     ) throws -> [ReconciliationPlan] {
-        try decks.map { try reconciliationPlan(for: $0, now: now, timeZone: timeZone) }
+        try decks.map { try reconciliationPlan(for: $0, in: try context(for: $0), now: now, timeZone: timeZone) }
+    }
+
+    static func planReconciliation(
+        for decks: [Deck], in context: ModelContext,
+        now: Date, timeZone: TimeZone = .autoupdatingCurrent
+    ) throws -> [ReconciliationPlan] {
+        try decks.map { try reconciliationPlan(for: $0, in: context, now: now, timeZone: timeZone) }
     }
 
     /// Applies only prevalidated values. This phase cannot discover a schedule
@@ -89,9 +121,10 @@ enum DeckScheduler {
     /// rollback.
     static func apply(_ plans: [ReconciliationPlan], in modelContext: ModelContext) {
         for plan in plans where plan.changesProgress {
-            let deletedIDs = Set(plan.entriesToDelete.map(\.persistentModelID))
-            for entry in plan.entriesToDelete { modelContext.delete(entry) }
-            plan.deck.historyEntries.removeAll { deletedIDs.contains($0.persistentModelID) }
+            for entry in plan.entriesToDelete {
+                entry.deck = nil
+                modelContext.delete(entry)
+            }
 
             var inserted: [HistoryEntry] = []
             for value in plan.entriesToInsert {
@@ -113,6 +146,7 @@ enum DeckScheduler {
 
     private static func reconciliationPlan(
         for deck: Deck,
+        in context: ModelContext,
         now: Date,
         timeZone: TimeZone
     ) throws -> ReconciliationPlan {
@@ -130,7 +164,7 @@ enum DeckScheduler {
         let configuredZone = deck.displayConfig?.scheduleTimeZoneIdentifier
         let zoneChanged = configuredZone != timeZone.identifier
         let rebuildForZone = zoneChanged && (deck.displayConfig?.sleepEnabled == true)
-        let validated = try validatedUnreachedEntries(for: deck)
+        let validated = try validatedUnreachedEntries(for: deck, in: context)
 
         let deletes: [HistoryEntry] = rebuildForZone ? validated : []
         var retainedFuture = rebuildForZone ? [] : validated
@@ -155,7 +189,7 @@ enum DeckScheduler {
         var referenceCard = retainedFuture.last?.card ?? current?.card
         var referenceDate = retainedFuture.last?.projectedAt ?? current?.projectedAt
 
-        if current == nil, highest == nil, deck.historyEntries.isEmpty {
+        if current == nil, highest == nil, validated.isEmpty {
             guard let firstCard = initialCard(for: deck) else { throw ScheduleError.malformed }
             let sequence = nextSequence
             let increment = sequence.addingReportingOverflow(1)
@@ -216,13 +250,13 @@ enum DeckScheduler {
     /// A schedule read must never create, advance, or top up rows. Mutation
     /// belongs to an explicitly locked transaction.
     static func readSchedule(for deck: Deck, in modelContext: ModelContext) {
-        _ = try? validatedUnreachedEntries(for: deck)
+        _ = try? validatedUnreachedEntries(for: deck, in: modelContext)
     }
 
     static func readSchedule(for deck: Deck, in modelContext: ModelContext, now: Date) throws {
         _ = now
         _ = modelContext
-        _ = try validatedUnreachedEntries(for: deck)
+        _ = try validatedUnreachedEntries(for: deck, in: modelContext)
     }
 
     /// Creates/top-ups a schedule. Callers must hold the exclusive schedule
@@ -247,8 +281,8 @@ enum DeckScheduler {
 
     static func next(_ deck: Deck, in modelContext: ModelContext, now: Date) throws {
         guard !deck.isPaused, !deck.activeCards.isEmpty else { return }
-        let needsInitialSeed = deck.activeHistoryEntry == nil &&
-            deck.highestReachedSequence == nil && deck.historyEntries.isEmpty
+        let needsInitialSeed = try deck.activeHistoryEntry == nil &&
+            deck.highestReachedSequence == nil && unreachedEntries(for: deck, in: modelContext).isEmpty
         if needsInitialSeed {
             try topUp(deck, in: modelContext, now: now)
             return
@@ -258,15 +292,14 @@ enum DeckScheduler {
 
         let (targetSequence, overflow) = (deck.highestReachedSequence ?? 0).addingReportingOverflow(1)
         guard !overflow else { throw ScheduleError.malformed }
-        guard let targetEntry = deck.historyEntries.first(where: { $0.sequence == targetSequence }) else {
+        guard let targetEntry = try entry(sequence: targetSequence, for: deck, in: modelContext) else {
             return
         }
 
         let intervalSeconds = try validatedIntervalSeconds(for: deck)
         targetEntry.projectedAt = now
-        let laterEntries = deck.historyEntries
+        let laterEntries = try unreachedEntries(for: deck, in: modelContext)
             .filter { $0.sequence > targetSequence }
-            .sorted { $0.sequence < $1.sequence }
         var anchor = now
         for entry in laterEntries {
             anchor = try scheduledDate(after: anchor, seconds: intervalSeconds, deck: deck)
@@ -282,8 +315,8 @@ enum DeckScheduler {
     /// debounces `rebuildFuture` so several taps cause one expensive rebuild.
     static func advanceImmediately(_ deck: Deck, in modelContext: ModelContext, now: Date) throws {
         guard !deck.isPaused, !deck.activeCards.isEmpty else { return }
-        let needsInitialSeed = deck.activeHistoryEntry == nil &&
-            deck.highestReachedSequence == nil && deck.historyEntries.isEmpty
+        let needsInitialSeed = try deck.activeHistoryEntry == nil &&
+            deck.highestReachedSequence == nil && unreachedEntries(for: deck, in: modelContext).isEmpty
         if needsInitialSeed {
             try topUp(deck, in: modelContext, now: now)
             return
@@ -292,7 +325,7 @@ enum DeckScheduler {
 
         let (targetSequence, overflow) = (deck.highestReachedSequence ?? 0).addingReportingOverflow(1)
         guard !overflow else { throw ScheduleError.malformed }
-        guard let targetEntry = deck.historyEntries.first(where: { $0.sequence == targetSequence }) else {
+        guard let targetEntry = try entry(sequence: targetSequence, for: deck, in: modelContext) else {
             return
         }
 
@@ -305,9 +338,9 @@ enum DeckScheduler {
 
     /// Config `order` change: discards the unreached queue (always), then
     /// regenerates it per the new `order` if the deck isn't paused.
-    static func handleOrderChange(for deck: Deck, in modelContext: ModelContext) {
-        discardUnreachedQueue(deck, in: modelContext)
-        try? topUp(deck, in: modelContext, now: Date())
+    static func handleOrderChange(for deck: Deck, in modelContext: ModelContext) throws {
+        try discardUnreachedQueue(deck, in: modelContext)
+        try topUp(deck, in: modelContext, now: Date())
     }
 
     /// Re-import soft-delete reconciliation for a deck that had one or
@@ -315,25 +348,21 @@ enum DeckScheduler {
     /// (always, regardless of pause), clears the pointer if its own
     /// entry's card was among those soft-deleted (without deleting that
     /// row), then regenerates if the deck isn't paused.
-    static func handleSoftDelete(for deck: Deck, in modelContext: ModelContext) {
-        discardUnreachedQueue(deck, in: modelContext)
+    static func handleSoftDelete(for deck: Deck, in modelContext: ModelContext) throws {
+        try discardUnreachedQueue(deck, in: modelContext)
         if let current = deck.activeHistoryEntry, let card = current.card, !card.isActive {
             deck.activeHistoryEntry = nil
         }
-        try? topUp(deck, in: modelContext, now: Date())
+        try topUp(deck, in: modelContext, now: Date())
     }
 
     /// Deletes every `HistoryEntry` with `sequence > highestReachedSequence`
     /// for this deck (the unreached queue only -- the current entry and
     /// all real history are untouched). Always runs, paused or not.
     ///
-    /// Also explicitly prunes `deck.historyEntries` in memory: `modelContext.
-    /// delete(_:)` doesn't synchronously remove the deleted object from
-    /// other objects' already-materialized relationship arrays within the
-    /// same context, so leaving that to happen implicitly would let a
-    /// zombie entry keep being counted as "still queued" by every later
-    /// step in this same call (e.g. `topUp` deciding it already has 10 and
-    /// declining to regenerate).
+    /// Clears each deleted entry's inverse link before deletion so an already
+    /// registered deck does not retain tombstoned queue rows in this context.
+    /// Queue reads themselves use bounded SwiftData queries.
     ///
     /// Rewinds `nextHistorySequence` back down to `highestReachedSequence +
     /// 1`: every discarded row's `sequence` was strictly greater than that,
@@ -344,36 +373,15 @@ enum DeckScheduler {
     /// between `highestReachedSequence` and the next real row -- which
     /// breaks "Next" (decision 4), whose `sequence == highestReachedSequence
     /// + 1` lookup depends on that contiguity.
-    static func discardUnreachedQueue(_ deck: Deck, in modelContext: ModelContext) {
-        let toDiscard = unreachedEntries(for: deck)
+    static func discardUnreachedQueue(_ deck: Deck, in modelContext: ModelContext) throws {
+        let toDiscard = try unreachedEntries(for: deck, in: modelContext)
+        guard toDiscard.count <= queueSize else { throw ScheduleError.malformed }
         guard !toDiscard.isEmpty else { return }
-        let discardedIDs = Set(toDiscard.map(\.persistentModelID))
         for entry in toDiscard {
+            entry.deck = nil
             modelContext.delete(entry)
         }
-        deck.historyEntries.removeAll { discardedIDs.contains($0.persistentModelID) }
         deck.nextHistorySequence = (deck.highestReachedSequence ?? 0).addingReportingOverflow(1).partialValue
-    }
-
-    // MARK: - History pagination
-
-    /// `HistoryEntry` rows with `sequence <= highestReachedSequence`
-    /// (never entries still sitting unreached in the queue), sorted by
-    /// `sequence` descending.
-    static func reachedEntries(for deck: Deck) -> [HistoryEntry] {
-        guard let highest = deck.highestReachedSequence else { return [] }
-        return deck.historyEntries
-            .filter { $0.sequence <= highest }
-            .sorted { $0.sequence > $1.sequence }
-    }
-
-    /// Loads `limit` reached entries at a time, starting at `offset` into
-    /// the descending-by-`sequence` reached list. Never includes an
-    /// unreached queue entry.
-    static func historyPage(for deck: Deck, offset: Int, limit: Int = queueSize) -> [HistoryEntry] {
-        let all = reachedEntries(for: deck)
-        guard offset < all.count else { return [] }
-        return Array(all[offset..<min(offset + limit, all.count)])
     }
 
     // MARK: - Top-up
@@ -388,41 +396,49 @@ enum DeckScheduler {
         now: Date,
         anchorEmptyQueueAtNow: Bool = false
     ) throws {
-        guard !deck.isPaused else { return }
-        guard !deck.activeCards.isEmpty else { return }
+        guard !deck.isPaused, !deck.activeCards.isEmpty else { return }
         if let config = deck.displayConfig, config.scheduleTimeZoneIdentifier == nil {
             config.scheduleTimeZoneIdentifier = TimeZone.autoupdatingCurrent.identifier
         }
-        // Seeding and resuming are explicit user/app actions. They create a
-        // real current row immediately; the remaining ten rows are automatic
-        // successors. The widget and app therefore start from the same
-        // persisted pointer instead of the widget having to infer sequence 1.
-        if deck.activeHistoryEntry == nil, deck.highestReachedSequence == nil,
-           deck.historyEntries.isEmpty,
-           let first = try generateNextEntry(for: deck, now: now, anchorEmptyQueueAtNow: true) {
+        var queue = try validatedUnreachedEntries(for: deck, in: modelContext)
+        if deck.activeHistoryEntry == nil, deck.highestReachedSequence == nil, queue.isEmpty,
+           let first = try generateNextEntry(for: deck, queue: queue, now: now, anchorEmptyQueueAtNow: true) {
             modelContext.insert(first)
             deck.activeHistoryEntry = first
             deck.highestReachedSequence = first.sequence
         }
-        _ = try validatedUnreachedEntries(for: deck)
-        while unreachedEntries(for: deck).count < queueSize {
+        while queue.count < queueSize {
             guard let entry = try generateNextEntry(
-                for: deck,
-                now: now,
-                anchorEmptyQueueAtNow: anchorEmptyQueueAtNow
+                for: deck, queue: queue, now: now, anchorEmptyQueueAtNow: anchorEmptyQueueAtNow
             ) else { break }
             modelContext.insert(entry)
+            queue.append(entry)
         }
     }
 
-    /// All currently-unreached entries for a deck (`sequence >
-    /// highestReachedSequence`, or every entry if `highestReachedSequence`
-    /// is `nil`), sorted ascending by `sequence`.
-    private static func unreachedEntries(for deck: Deck) -> [HistoryEntry] {
+    static func context(for deck: Deck) throws -> ModelContext {
+        guard let context = deck.modelContext else { throw ScheduleError.malformed }
+        return context
+    }
+
+    static func entry(sequence: Int, for deck: Deck, in context: ModelContext) throws -> HistoryEntry? {
+        let deckID = deck.persistentModelID
+        var descriptor = FetchDescriptor<HistoryEntry>(predicate: #Predicate<HistoryEntry> {
+            $0.deck?.persistentModelID == deckID && $0.sequence == sequence
+        })
+        descriptor.fetchLimit = 1
+        return try ScheduleQueryTrace.fetch(descriptor, in: context,
+                                            kind: .current(sequence: sequence)).first
+    }
+
+    static func unreachedEntries(for deck: Deck, in context: ModelContext) throws -> [HistoryEntry] {
+        let deckID = deck.persistentModelID
         let highest = deck.highestReachedSequence ?? 0
-        return deck.historyEntries
-            .filter { $0.sequence > highest }
-            .sorted { $0.sequence < $1.sequence }
+        var descriptor = FetchDescriptor<HistoryEntry>(predicate: #Predicate<HistoryEntry> {
+            $0.deck?.persistentModelID == deckID && $0.sequence > highest
+        }, sortBy: [SortDescriptor(\HistoryEntry.sequence)])
+        descriptor.fetchLimit = queueSize + 1
+        return try ScheduleQueryTrace.fetch(descriptor, in: context, kind: .unreached)
     }
 
     /// Generates exactly one new queued entry, chained off "the reference
@@ -435,6 +451,7 @@ enum DeckScheduler {
     ///    always on the pointer, never on `highestReachedSequence`.
     private static func generateNextEntry(
         for deck: Deck,
+        queue: [HistoryEntry],
         now: Date,
         anchorEmptyQueueAtNow: Bool = false
     ) throws -> HistoryEntry? {
@@ -445,7 +462,7 @@ enum DeckScheduler {
         let intervalMinutes = deck.displayConfig?.intervalMinutes ?? DisplayConfig.defaultIntervalMinutes
         _ = try validatedIntervalSeconds(for: deck)
 
-        if let reference = unreachedEntries(for: deck).last {
+        if let reference = queue.last {
             return try chainedEntry(after: reference, order: order, intervalMinutes: intervalMinutes, activeCards: activeCards, deck: deck)
         }
         if let pointerEntry = deck.activeHistoryEntry, !anchorEmptyQueueAtNow {
@@ -461,7 +478,7 @@ enum DeckScheduler {
         case .random:
             card = activeCards.randomElement()!
         }
-        let (offset, offsetOverflow) = unreachedEntries(for: deck).count.addingReportingOverflow(1)
+        let (offset, offsetOverflow) = queue.count.addingReportingOverflow(1)
         guard !offsetOverflow else { throw ScheduleError.malformed }
         let (sequence, overflow) = (deck.highestReachedSequence ?? 0).addingReportingOverflow(offset)
         guard !overflow else { throw ScheduleError.malformed }
@@ -478,8 +495,12 @@ enum DeckScheduler {
     }
 
     static func validatedUnreachedEntries(for deck: Deck) throws -> [HistoryEntry] {
+        try validatedUnreachedEntries(for: deck, in: context(for: deck))
+    }
+
+    static func validatedUnreachedEntries(for deck: Deck, in context: ModelContext) throws -> [HistoryEntry] {
         let highest = deck.highestReachedSequence ?? 0
-        let entries = deck.historyEntries.filter { $0.sequence > highest }.sorted { $0.sequence < $1.sequence }
+        let entries = try unreachedEntries(for: deck, in: context)
         guard entries.count <= queueSize else { throw ScheduleError.malformed }
         let (firstExpected, overflow) = highest.addingReportingOverflow(1)
         guard !overflow else { throw ScheduleError.malformed }
@@ -520,7 +541,7 @@ enum DeckScheduler {
                 config.scheduleTimeZoneIdentifier = TimeZone.autoupdatingCurrent.identifier
             }
         }
-        let entries = try validatedUnreachedEntries(for: deck)
+        let entries = try validatedUnreachedEntries(for: deck, in: modelContext)
         let due = entries.prefix { $0.projectedAt <= now }
         if let effective = due.last {
             deck.highestReachedSequence = effective.sequence
@@ -530,7 +551,7 @@ enum DeckScheduler {
 
     static func setPaused(_ paused: Bool, deck: Deck, in modelContext: ModelContext, now: Date) throws {
         if paused {
-            discardUnreachedQueue(deck, in: modelContext)
+            try discardUnreachedQueue(deck, in: modelContext)
             deck.isPaused = true
         } else {
             deck.isPaused = false
@@ -563,11 +584,9 @@ enum DeckScheduler {
         timeZone: TimeZone = .autoupdatingCurrent
     ) throws {
         _ = try validatedIntervalSeconds(for: deck)
-        if let config = deck.displayConfig {
-            try config.validateSleep()
-            config.scheduleTimeZoneIdentifier = timeZone.identifier
-        }
-        discardUnreachedQueue(deck, in: modelContext)
+        try deck.displayConfig?.validateSleep()
+        try discardUnreachedQueue(deck, in: modelContext)
+        deck.displayConfig?.scheduleTimeZoneIdentifier = timeZone.identifier
         if !deck.isPaused, let current = deck.activeHistoryEntry {
             let first = try chainedEntry(
                 after: current,

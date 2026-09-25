@@ -190,6 +190,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = CED868B3305585DA009EFF31 /* Build configuration list for PBXNativeTarget "flashcard-widget" */;
 			buildPhases = (
+				F14000000000000000000001 /* Check Bounded Schedule History Access */,
 				CED868A2305585D9009EFF31 /* Sources */,
 				CED868A3305585D9009EFF31 /* Frameworks */,
 				CED868A4305585D9009EFF31 /* Resources */,
@@ -289,6 +290,23 @@
 			);
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F14000000000000000000001 /* Check Bounded Schedule History Access */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			inputPaths = (
+				"$(SRCROOT)/scripts/check-schedule-history-access.sh",
+				"$(SRCROOT)/flashcard-widget",
+				"$(SRCROOT)/FlashcardWidget",
+			);
+			name = "Check Bounded Schedule History Access";
+			shellPath = /bin/sh;
+			shellScript = (
+				"\"${SRCROOT}/scripts/check-schedule-history-access.sh\"",
+			);
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		CE5E403C305AAF6B0087CC96 /* Sources */ = {
@@ -539,6 +557,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = UTJKKL2M45;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/flashcard-widget/ThirdParty/zstd/lib";
 				INFOPLIST_FILE = "flashcard-widget/Info.plist";
@@ -577,6 +596,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = UTJKKL2M45;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/flashcard-widget/ThirdParty/zstd/lib";
 				INFOPLIST_FILE = "flashcard-widget/Info.plist";

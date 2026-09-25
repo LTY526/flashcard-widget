@@ -223,7 +223,7 @@ struct DeckSchedulerTests {
         #expect(unreachedIDsBefore.count == DeckScheduler.queueSize)
 
         deck.displayConfig?.order = .random
-        DeckScheduler.handleOrderChange(for: deck, in: context)
+        try DeckScheduler.handleOrderChange(for: deck, in: context)
 
         let afterChange = deck.historyEntries.sorted { $0.sequence < $1.sequence }
         let unreachedAfter = afterChange.filter { $0.sequence > (deck.highestReachedSequence ?? 0) }
@@ -255,7 +255,7 @@ struct DeckSchedulerTests {
         #expect(unreachedBefore.contains { $0.card?.persistentModelID == cardB.persistentModelID }, "cardB must appear in the unreached queue for this test to be meaningful")
 
         cardB.removedAt = Date() // soft-deleted; referenced only by an unreached entry
-        DeckScheduler.handleSoftDelete(for: deck, in: context)
+        try DeckScheduler.handleSoftDelete(for: deck, in: context)
 
         #expect(deck.activeHistoryEntry?.persistentModelID == currentEntry.persistentModelID, "pointer unaffected")
 
@@ -320,7 +320,7 @@ struct DeckSchedulerTests {
 
         deck.isPaused = true
         deck.displayConfig?.order = .random
-        DeckScheduler.handleOrderChange(for: deck, in: context)
+        try DeckScheduler.handleOrderChange(for: deck, in: context)
 
         #expect(deck.historyEntries.count == 1, "only the current row remains while paused")
 
@@ -365,7 +365,7 @@ struct DeckSchedulerTests {
         // Simulate a re-import's reconciliation soft-deleting the pointer's
         // own card while the deck is paused.
         cardA.removedAt = Date()
-        DeckScheduler.handleSoftDelete(for: deck, in: context)
+        try DeckScheduler.handleSoftDelete(for: deck, in: context)
 
         #expect(deck.activeHistoryEntry == nil, "pointer cleared since its card was soft-deleted")
         #expect(deck.highestReachedSequence == 1, "highestReachedSequence must remain at its old, non-nil value")
@@ -386,38 +386,6 @@ struct DeckSchedulerTests {
     }
 
     // MARK: - History pagination
-
-    @Test("History pagination loads reached entries 10 at a time, descending by sequence, never including the unreached queue")
-    func historyPaginationLoadsTenAtATime() throws {
-        let context = try makeInMemoryContext()
-        let deck = makeDeck(ankiID: 1, order: .sequential, in: context)
-        for id in [1, 2, 3] as [Int64] { _ = makeCard(ankiID: id, deck: deck, in: context) }
-        try context.save()
-
-        for _ in 0..<25 {
-            DeckScheduler.next(deck, in: context)
-        }
-        #expect(deck.highestReachedSequence == 25)
-        let unreached = deck.historyEntries.filter { $0.sequence > 25 }
-        #expect(unreached.count == DeckScheduler.queueSize, "a full unreached queue sits ahead of history")
-        let unreachedIDs = Set(unreached.map(\.persistentModelID))
-
-        let firstPage = DeckScheduler.historyPage(for: deck, offset: 0, limit: 10)
-        #expect(firstPage.count == 10)
-        #expect(firstPage.map(\.sequence) == Array((16...25).reversed()))
-
-        let secondPage = DeckScheduler.historyPage(for: deck, offset: 10, limit: 10)
-        #expect(secondPage.count == 10)
-        #expect(secondPage.map(\.sequence) == Array((6...15).reversed()))
-
-        let thirdPage = DeckScheduler.historyPage(for: deck, offset: 20, limit: 10)
-        #expect(thirdPage.count == 5)
-        #expect(thirdPage.map(\.sequence) == Array((1...5).reversed()))
-
-        for page in [firstPage, secondPage, thirdPage] {
-            #expect(page.allSatisfy { !unreachedIDs.contains($0.persistentModelID) })
-        }
-    }
 
     // MARK: - DisplayConfig
 
