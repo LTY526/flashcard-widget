@@ -67,9 +67,8 @@ After successful library activation, ContentView presents the five-step guide
 once for each new onboarding version. It waits for the file picker, mapping
 sheet, alerts, removal dialog, and other active work to close. An outstanding
 automatic introduction stays pending if the user starts a manual replay first;
-it appears after that sheet closes. Both the permanent Getting Started toolbar
-action and the temporary Test Onboarding button on the root deck page open a
-manual replay, including when the library has no decks.
+it appears after that sheet closes. The Getting Started toolbar action on the
+root deck page opens a manual replay, including when the library has no decks.
 
 The guide only explains where to use existing app and system controls. It does
 not import, configure, or schedule anything. The first three steps show

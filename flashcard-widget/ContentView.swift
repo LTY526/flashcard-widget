@@ -85,12 +85,7 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack(path: $route.path) {
-            VStack(spacing: 0) {
-                // Temporary manual-test entry point. Keep through user review.
-                Button("Test Onboarding") { presentManualOnboarding() }
-                    .buttonStyle(.borderedProminent)
-                    .padding(.top, 12)
-                    .accessibilityHint("Opens the Getting Started guide for testing")
+            Group {
                 if decks.isEmpty {
                     ContentUnavailableView(
                         "No decks yet",
