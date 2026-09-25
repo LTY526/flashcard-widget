@@ -77,6 +77,57 @@ struct OnboardingAcceptanceTests {
         for word in ["lock screen", "configuration", "deck", "each widget", "quaternary", "app"] { #expect(instructions[4].contains(word)) }
     }
 
+    @Test("presented pages bind every step to its destination and navigation controls")
+    func presentedPages() {
+        let destinations = [
+            "Decks → Import .apkg → Files",
+            "Deck → Config → Field Mapping",
+            "Deck → Config; Current for Pause/Resume",
+            "System Lock Screen editor → rectangular widget",
+            "System Lock Screen editor → widget configuration → Deck"
+        ]
+        let observed = OnboardingObservedState(decks: [] as [OnboardingDeckState])
+        for (index, step) in OnboardingStep.allCases.enumerated() {
+            let page = OnboardingPage(model: OnboardingModel(at: step),
+                                      kind: .manual, observedState: observed)
+            #expect(page.title == step.title)
+            #expect(page.instructions == step.instructions)
+            #expect(page.destination == destinations[index])
+            #expect(page.progress == "Step \(index + 1) of 5")
+            #expect(page.canGoBack == (index > 0))
+            #expect(page.advanceLabel == (index == 4 ? "Finish" : "Next"))
+            #expect(page.showsRestart)
+            #expect(page.dismissLabel == "Dismiss")
+            #expect(page.completionLabel == (index < 3 ? "Not complete yet" : nil))
+        }
+        let automatic = OnboardingPage(model: OnboardingModel(), kind: .automatic,
+                                       observedState: observed)
+        #expect(!automatic.showsRestart)
+    }
+
+    @Test("manual replay cannot consume a pending automatic introduction")
+    func automaticPresentationSurvivesManualReplay() {
+        var queue = OnboardingPresentationQueue()
+        queue.activationSucceeded(shouldPresentAutomatically: true)
+        #expect(queue.pendingAutomatic)
+        #expect(queue.beginManual())
+        #expect(!queue.beginAutomaticIfReady(true))
+        queue.activationSucceeded(shouldPresentAutomatically: true)
+        queue.closed(.manual)
+        #expect(queue.pendingAutomatic)
+        #expect(!queue.beginAutomaticIfReady(false))
+        #expect(queue.beginAutomaticIfReady(true))
+        queue.closed(.automatic)
+        #expect(!queue.pendingAutomatic)
+
+        var race = OnboardingPresentationQueue()
+        race.activationSucceeded(shouldPresentAutomatically: true)
+        #expect(race.beginManual())
+        #expect(!race.beginAutomaticIfReady(true))
+        race.closed(.manual)
+        #expect(race.beginAutomaticIfReady(true))
+    }
+
     @Test("checkmarks use independent observed deck predicates and never navigate")
     func checkmarks() {
         var model = OnboardingModel(at: .selectDeck)
